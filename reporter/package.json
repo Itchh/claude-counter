@@ -1,0 +1,15 @@
+{
+  "name": "leaderboard-reporter",
+  "version": "1.0.0",
+  "type": "module",
+  "main": "index.ts",
+  "scripts": {
+    "start": "bun index.ts"
+  },
+  "dependencies": {
+    "chokidar": "^3.6.0"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}
