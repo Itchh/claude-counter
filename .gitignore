@@ -2,6 +2,8 @@
 
 # dependencies
 /node_modules
+reporter/node_modules
+reporter/bun.lock
 /.pnp
 .pnp.*
 .yarn/*
