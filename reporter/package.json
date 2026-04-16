@@ -4,7 +4,11 @@
   "type": "module",
   "main": "index.ts",
   "scripts": {
-    "start": "bun index.ts"
+    "start": "bun index.ts",
+    "setup": "bun setup.ts",
+    "remove": "bun uninstall.ts",
+    "restart": "launchctl kickstart -k gui/$(id -u)/com.leaderboard.reporter",
+    "logs": "tail -f $HOME/Library/Logs/leaderboard-reporter.log"
   },
   "dependencies": {
     "chokidar": "^3.6.0"

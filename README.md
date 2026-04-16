@@ -1,36 +1,72 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# Claude Code Token Leaderboard
 
-## Getting Started
+A team scoreboard that tracks how many Claude Code tokens each teammate has
+used. A tiny reporter runs silently in the background on every teammate's
+Mac, sends token usage to a server, and the leaderboard page displays it
+live.
 
-First, run the development server:
+## Install the reporter (teammates)
 
-```bash
-npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
+Paste this into a terminal on your Mac:
+
+```
+curl -fsSL https://raw.githubusercontent.com/Itchh/claude-counter/master/reporter/install.sh | bash
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+You'll be asked three things:
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+- **Display name** — what shows on the leaderboard (your first name is fine)
+- **Leaderboard URL** — the Vercel URL (ask the person who set it up)
+- **Shared secret** — ask the person who set it up
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+That's it. From that moment on, the reporter runs in the background on your
+Mac, starts itself every time you log in, and auto-pulls any future updates
+once an hour. There's nothing to keep open and nothing to babysit.
 
-## Learn More
+Want to check it's working? Visit the leaderboard URL in your browser — your
+name should appear within a minute.
 
-To learn more about Next.js, take a look at the following resources:
+### Removing it
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+```
+cd ~/.local/share/claude-leaderboard-reporter/reporter
+bun remove
+```
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+See [`reporter/README.md`](reporter/README.md) for the full operator guide
+(logs, restart, manual install, how it keeps itself quiet, etc.).
 
-## Deploy on Vercel
+## For the admin
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
+This repo contains:
 
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+- **`app/`, `lib/`, `types/`** — the Next.js leaderboard web app, deployed
+  on Vercel. It polls `/api/leaderboard` every 10 seconds to render live
+  rankings.
+- **`reporter/`** — the client-side CLI that scans each user's Claude Code
+  session files and POSTs stats to `/api/report`.
+
+### Deploying the leaderboard
+
+1. Import the repo into Vercel (auto-detects Next.js — no config needed).
+2. Add a Vercel KV / Upstash Redis store via the Storage tab. Vercel will
+   inject `KV_URL`, `KV_REST_API_URL`, and `KV_REST_API_TOKEN` env vars
+   automatically.
+3. In Settings → Environment Variables, add `LEADERBOARD_SECRET` (any
+   passphrase — share it with teammates for their reporter setup).
+4. Redeploy so the env var takes effect.
+
+### How it works
+
+```
+teammates' laptops                Vercel
+──────────────────                ──────────────────────────
+reporter (launchd agent)    ──→   POST /api/report  ──→  Upstash Redis
+scans ~/.claude/projects          (validates LEADERBOARD_SECRET)
+every 30s + on file change
+                                  GET /api/leaderboard  ←──  browsers
+                                  (reads Redis, sorts)       poll every 10s
+```
+
+Tokens are counted from the JSONL session files Claude Code writes locally.
+No data leaves the machine besides the aggregate numbers.
