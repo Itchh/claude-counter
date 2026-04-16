@@ -1,6 +1,6 @@
 import { spawn } from 'child_process'
 import { chmod, mkdir, writeFile, access } from 'fs/promises'
-import { existsSync } from 'fs'
+import { existsSync, createReadStream, createWriteStream } from 'fs'
 import os from 'os'
 import path from 'path'
 import readline from 'readline'
@@ -90,9 +90,11 @@ function ask(rl: readline.Interface, question: string): Promise<string> {
 }
 
 async function promptConfig(): Promise<Config> {
+  // Open /dev/tty directly so prompts work even when stdin is a pipe (e.g. curl | bash).
   const rl = readline.createInterface({
-    input: process.stdin,
-    output: process.stdout,
+    input: createReadStream('/dev/tty'),
+    output: createWriteStream('/dev/tty'),
+    terminal: true,
   })
   console.log('\nClaude Leaderboard Reporter — Setup\n')
   const name = await ask(rl, 'Your display name: ')
