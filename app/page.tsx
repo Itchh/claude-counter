@@ -1,10 +1,11 @@
 'use client'
 
-import { useCallback, useEffect, useRef, useState } from 'react'
-import type { LeaderboardEntry, LeaderboardResponse } from '@/types'
+import { useEffect, useRef, useState } from 'react'
+import { useQuery } from 'convex/react'
+import { api } from '../convex/_generated/api'
+import type { LeaderboardEntry } from '@/types'
 import { fmtTokens, fmtTokensShort, fmtTime } from '@/lib/formatters'
 
-const POLL_INTERVAL = 10_000
 const FLASH_DURATION = 800
 const REFRESH_FLASH_DURATION = 1000
 const BAR_LENGTH = 30
@@ -33,8 +34,8 @@ function useClockTime(): string {
 function buildBar(ratio: number): { filled: string; empty: string } {
   const filledCount = Math.round(ratio * BAR_LENGTH)
   return {
-    filled: '▓'.repeat(filledCount),
-    empty: '░'.repeat(BAR_LENGTH - filledCount),
+    filled: '\u2593'.repeat(filledCount),
+    empty: '\u2591'.repeat(BAR_LENGTH - filledCount),
   }
 }
 
@@ -62,8 +63,7 @@ function rankNumberColor(rank: number): string {
 }
 
 export default function LeaderboardPage(): React.ReactElement {
-  const [data, setData] = useState<LeaderboardResponse | null>(null)
-  const [error, setError] = useState(false)
+  const data = useQuery(api.leaderboard.get)
   const [justRefreshed, setJustRefreshed] = useState(false)
   const [flashMap, setFlashMap] = useState<Record<string, 'up' | 'down'>>({})
   const [loaded, setLoaded] = useState(false)
@@ -71,51 +71,38 @@ export default function LeaderboardPage(): React.ReactElement {
   const prevUpdatedAt = useRef<string>('')
   const clock = useClockTime()
 
-  const poll = useCallback(async () => {
-    try {
-      const res = await fetch('/api/leaderboard')
-      const json: LeaderboardResponse = await res.json()
-      setData(json)
-      setError(false)
-
-      if (prevUpdatedAt.current && json.updatedAt !== prevUpdatedAt.current) {
-        setJustRefreshed(true)
-        setTimeout(() => setJustRefreshed(false), REFRESH_FLASH_DURATION)
-      }
-      prevUpdatedAt.current = json.updatedAt
-
-      if (prevRanks.current.size > 0) {
-        const flashes: Record<string, 'up' | 'down'> = {}
-        for (const entry of json.leaderboard) {
-          const key = entry.name.toLowerCase()
-          const prev = prevRanks.current.get(key)
-          if (prev !== undefined && prev !== entry.rank) {
-            flashes[key] = entry.rank < prev ? 'up' : 'down'
-          }
-        }
-        if (Object.keys(flashes).length > 0) {
-          setFlashMap(flashes)
-          setTimeout(() => setFlashMap({}), FLASH_DURATION)
-        }
-      }
-
-      const newRanks = new Map<string, number>()
-      for (const entry of json.leaderboard) {
-        newRanks.set(entry.name.toLowerCase(), entry.rank)
-      }
-      prevRanks.current = newRanks
-
-      if (!loaded) setLoaded(true)
-    } catch {
-      setError(true)
-    }
-  }, [loaded])
-
   useEffect(() => {
-    poll()
-    const id = setInterval(poll, POLL_INTERVAL)
-    return () => clearInterval(id)
-  }, [poll])
+    if (!data) return
+
+    if (prevUpdatedAt.current && data.updatedAt !== prevUpdatedAt.current) {
+      setJustRefreshed(true)
+      setTimeout(() => setJustRefreshed(false), REFRESH_FLASH_DURATION)
+    }
+    prevUpdatedAt.current = data.updatedAt
+
+    if (prevRanks.current.size > 0) {
+      const flashes: Record<string, 'up' | 'down'> = {}
+      for (const entry of data.leaderboard) {
+        const key = entry.name.toLowerCase()
+        const prev = prevRanks.current.get(key)
+        if (prev !== undefined && prev !== entry.rank) {
+          flashes[key] = entry.rank < prev ? 'up' : 'down'
+        }
+      }
+      if (Object.keys(flashes).length > 0) {
+        setFlashMap(flashes)
+        setTimeout(() => setFlashMap({}), FLASH_DURATION)
+      }
+    }
+
+    const newRanks = new Map<string, number>()
+    for (const entry of data.leaderboard) {
+      newRanks.set(entry.name.toLowerCase(), entry.rank)
+    }
+    prevRanks.current = newRanks
+
+    if (!loaded) setLoaded(true)
+  }, [data, loaded])
 
   const maxTokens = data?.leaderboard[0]?.totalTokens ?? 1
 
@@ -249,7 +236,7 @@ export default function LeaderboardPage(): React.ReactElement {
                     verticalAlign: 'middle',
                   }}
                 >
-                  {entry.isOnline ? '■' : '□'}
+                  {entry.isOnline ? '\u25A0' : '\u25A1'}
                 </span>
 
                 {/* NAME */}
@@ -335,8 +322,8 @@ export default function LeaderboardPage(): React.ReactElement {
             fontSize: 'clamp(11px, 1.3vw, 15px)',
           }}
         >
-          {error ? (
-            'RECONNECTING...'
+          {!data ? (
+            'CONNECTING...'
           ) : (
             <>
               <span style={{ animation: 'blink 1.2s step-end infinite' }}>

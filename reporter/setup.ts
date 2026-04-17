@@ -100,7 +100,7 @@ async function promptConfig(): Promise<Config> {
   const name = await ask(rl, 'Your display name: ')
   const serverUrl = await ask(
     rl,
-    'Leaderboard URL (e.g. https://claude-counter.vercel.app): '
+    'Convex site URL (e.g. https://your-deployment.convex.site): '
   )
   const secret = await ask(rl, 'Shared secret: ')
   rl.close()

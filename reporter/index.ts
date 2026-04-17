@@ -341,7 +341,7 @@ async function persistCache(): Promise<void> {
 
 async function postToServer(config: Config, aggregate: Aggregate): Promise<void> {
   try {
-    const res = await fetch(`${config.serverUrl}/api/report`, {
+    const res = await fetch(`${config.serverUrl}/report`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({

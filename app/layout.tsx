@@ -1,4 +1,5 @@
 import type { Metadata } from 'next'
+import { ConvexClientProvider } from './ConvexClientProvider'
 
 export const metadata: Metadata = {
   title: 'Season One — Claude Leaderboard',
@@ -13,7 +14,7 @@ export default function RootLayout({
   return (
     <html lang="en">
       <body style={{ margin: 0, padding: 0, overflow: 'hidden' }}>
-        {children}
+        <ConvexClientProvider>{children}</ConvexClientProvider>
       </body>
     </html>
   )
