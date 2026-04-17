@@ -6,11 +6,13 @@ import os from 'os'
 import path from 'path'
 import { fileURLToPath } from 'url'
 import pc from 'picocolors'
+import { COLOR_PRESETS } from './colors'
 
 interface Config {
   name: string
   serverUrl: string
   secret: string
+  color?: string
 }
 
 interface RepoConfig {
@@ -202,10 +204,30 @@ async function promptConfig(): Promise<SetupResult> {
     return undefined
   })
 
+  process.stdout.write('\n' + pc.cyan('◆') + '  ' + pc.bold('Pick your timeline colour') + '\n')
+  for (let i = 0; i < COLOR_PRESETS.length; i++) {
+    const preset = COLOR_PRESETS[i]
+    process.stdout.write(pc.dim('│') + `  ${pc.bold(String(i + 1))} — ${preset.label} (${preset.hex})\n`)
+  }
+  process.stdout.write(pc.dim('│') + '  Or enter a custom hex (e.g. #ff0000)\n')
+
+  const colorInput = await ask(rl, 'Colour (number or hex)', (v) => {
+    if (!v) return 'Pick a colour'
+    const num = parseInt(v, 10)
+    if (!Number.isNaN(num) && num >= 1 && num <= COLOR_PRESETS.length) return undefined
+    if (/^#[0-9a-fA-F]{6}$/.test(v)) return undefined
+    return 'Enter a number (1-8) or a hex like #ff0000'
+  })
+
+  const colorNum = parseInt(colorInput, 10)
+  const color = !Number.isNaN(colorNum) && colorNum >= 1 && colorNum <= COLOR_PRESETS.length
+    ? COLOR_PRESETS[colorNum - 1].hex
+    : colorInput
+
   rl.close()
 
   return {
-    config: { name, serverUrl: serverUrl.replace(/\/$/, ''), secret },
+    config: { name, serverUrl: serverUrl.replace(/\/$/, ''), secret, color },
     leaderboardUrl: repoConfig?.leaderboardUrl ?? null,
   }
 }

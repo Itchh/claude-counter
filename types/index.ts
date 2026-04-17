@@ -7,6 +7,7 @@ export interface DevEntry {
   tokensToday: number
   sessionCount: number
   lastSeen: string
+  color: string | null
 }
 
 export interface LeaderboardEntry extends DevEntry {
@@ -34,4 +35,12 @@ export interface ReportBody {
   cacheTokens: number
   tokensToday: number
   sessionCount: number
+  color?: string
+}
+
+export interface TimelineUser {
+  key: string
+  name: string
+  color: string | null
+  points: ReadonlyArray<{ t: number; v: number }>
 }

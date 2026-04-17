@@ -36,6 +36,7 @@ http.route({
       tokensToday: body.tokensToday ?? 0,
       sessionCount: body.sessionCount ?? 0,
       lastSeen: new Date().toISOString(),
+      ...(typeof body.color === 'string' && /^#[0-9a-fA-F]{6}$/.test(body.color) ? { color: body.color } : {}),
     })
 
     return new Response(JSON.stringify({ ok: true }), {
