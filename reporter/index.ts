@@ -75,7 +75,7 @@ const CHOKIDAR_DEBOUNCE_MS = 2_000
 const CACHE_PERSIST_INTERVAL_MS = 5 * 60_000
 const MEMORY_CHECK_INTERVAL_MS = 60_000
 const UPDATE_CHECK_INTERVAL_MS = 60 * 60_000
-const MEMORY_CEILING_BYTES = 200 * 1024 * 1024
+const MEMORY_CEILING_BYTES = 400 * 1024 * 1024
 const AUTH_FAILURE_BACKOFF_MS = 60_000
 const FETCH_TIMEOUT_MS = 30_000
 const DRIFT_MIN_SAMPLE = 100
@@ -380,6 +380,7 @@ async function runScan(config: Config): Promise<void> {
   try {
     const aggregate = await aggregateAll()
     await postToServer(config, aggregate)
+    await persistCache()
   } catch (err) {
     console.error('Scan failed:', err)
   } finally {
@@ -387,12 +388,13 @@ async function runScan(config: Config): Promise<void> {
   }
 }
 
-function checkMemoryCeiling(): void {
+async function checkMemoryCeiling(): Promise<void> {
   const rss = process.memoryUsage().rss
   if (rss > MEMORY_CEILING_BYTES) {
     console.warn(
-      `RSS ${(rss / 1024 / 1024).toFixed(0)}MB exceeds ceiling; exiting for clean restart.`
+      `RSS ${(rss / 1024 / 1024).toFixed(0)}MB exceeds ceiling; persisting cache before restart.`
     )
+    await persistCache()
     process.exit(0)
   }
 }
@@ -457,7 +459,9 @@ async function main(): Promise<void> {
     void persistCache()
   }, CACHE_PERSIST_INTERVAL_MS)
 
-  setInterval(checkMemoryCeiling, MEMORY_CHECK_INTERVAL_MS)
+  setInterval(() => {
+    void checkMemoryCeiling()
+  }, MEMORY_CHECK_INTERVAL_MS)
 
   setInterval(() => {
     void checkForUpdates()
