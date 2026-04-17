@@ -10,6 +10,7 @@ interface Config {
   name: string
   serverUrl: string
   secret: string
+  color?: string
 }
 
 interface FileTotals {
@@ -348,6 +349,7 @@ async function postToServer(config: Config, aggregate: Aggregate): Promise<void>
         name: config.name,
         secret: config.secret,
         ...aggregate,
+        ...(config.color ? { color: config.color } : {}),
       }),
       signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
     })
