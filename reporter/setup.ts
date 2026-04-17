@@ -151,7 +151,7 @@ function buildPlist(bunPath: string): string {
   <key>HardResourceLimits</key>
   <dict>
     <key>ResidentSetSize</key>
-    <integer>262144000</integer>
+    <integer>419430400</integer>
   </dict>
   <key>EnvironmentVariables</key>
   <dict>
