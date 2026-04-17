@@ -48,4 +48,4 @@ echo "Installing dependencies..."
 bun install --silent
 
 echo "Launching setup..."
-exec bun setup.ts </dev/tty
+exec bun setup.ts </dev/tty >/dev/tty
