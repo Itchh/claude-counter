@@ -1,11 +1,20 @@
 import { spawn } from 'child_process'
 import { chmod, mkdir, writeFile, access, readFile } from 'fs/promises'
-import { existsSync } from 'fs'
+import { existsSync, openSync } from 'fs'
+import tty from 'tty'
 import os from 'os'
 import path from 'path'
 import { fileURLToPath } from 'url'
 import * as p from '@clack/prompts'
 import pc from 'picocolors'
+
+// When run via `curl | bash`, process.stdin is the pipe — not a real TTY.
+// Reopen /dev/tty so clack can render prompts and receive keystrokes.
+if (!process.stdin.isTTY) {
+  const fd = openSync('/dev/tty', 'r+')
+  process.stdin = new tty.ReadStream(fd) as NodeJS.ReadStream & { fd: number }
+  process.stdout = new tty.WriteStream(fd) as NodeJS.WriteStream & { fd: number }
+}
 
 interface Config {
   name: string
