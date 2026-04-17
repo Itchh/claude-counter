@@ -1,13 +1,19 @@
 import { spawn } from 'child_process'
-import { chmod, mkdir, writeFile, access } from 'fs/promises'
-import { existsSync, createReadStream, createWriteStream } from 'fs'
+import { chmod, mkdir, writeFile, access, readFile } from 'fs/promises'
+import { existsSync } from 'fs'
 import os from 'os'
 import path from 'path'
-import readline from 'readline'
 import { fileURLToPath } from 'url'
+import * as p from '@clack/prompts'
+import pc from 'picocolors'
 
 interface Config {
   name: string
+  serverUrl: string
+  secret: string
+}
+
+interface RepoConfig {
   serverUrl: string
   secret: string
 }
@@ -22,17 +28,32 @@ const LOG_DIR = path.join(HOME, 'Library/Logs')
 const LOG_PATH = path.join(LOG_DIR, 'leaderboard-reporter.log')
 const REPORTER_DIR = path.dirname(fileURLToPath(import.meta.url))
 const REPORTER_SCRIPT = path.join(REPORTER_DIR, 'index.ts')
+const REPO_CONFIG_PATH = path.join(REPORTER_DIR, '..', 'leaderboard.config.json')
+
+const amber = (text: string): string => pc.yellow(text)
+
+const BANNER = `
+  ${pc.bold(amber('  _____ _                 _'))}
+  ${pc.bold(amber(' / ____| |               | |'))}
+  ${pc.bold(amber('| |    | | __ _ _   _  __| | ___'))}
+  ${pc.bold(amber("| |    | |/ _` | | | |/ _` |/ _ \\"))}
+  ${pc.bold(amber('| |____| | (_| | |_| | (_| |  __/'))}
+  ${pc.bold(amber(' \\_____|_|\\__,_|\\__,_|\\__,_|\\___|'))}
+
+  ${pc.bold(amber('L E A D E R B O A R D'))}
+  ${pc.dim('Season One — Reporter Setup')}
+`
 
 function assertMacOS(): void {
   if (process.platform !== 'darwin') {
-    console.error('This setup script is macOS-only (uses launchd). Aborting.')
+    p.cancel('This setup script is macOS-only (uses launchd).')
     process.exit(1)
   }
 }
 
 function assertUid(): number {
   if (typeof UID !== 'number') {
-    console.error('Cannot read UID. Aborting.')
+    p.cancel('Cannot read UID.')
     process.exit(1)
   }
   return UID
@@ -73,7 +94,6 @@ async function locateBun(): Promise<string> {
   for (const candidate of candidates) {
     if (existsSync(candidate)) return candidate
   }
-  // Fall back to `which bun`
   const result = await run('/usr/bin/which', ['bun'])
   if (result.code === 0 && result.stdout.trim()) {
     return result.stdout.trim()
@@ -83,32 +103,105 @@ async function locateBun(): Promise<string> {
   )
 }
 
-function ask(rl: readline.Interface, question: string): Promise<string> {
-  return new Promise((resolve) => {
-    rl.question(question, (answer) => resolve(answer.trim()))
-  })
+async function loadRepoConfig(): Promise<RepoConfig | null> {
+  try {
+    const raw = await readFile(REPO_CONFIG_PATH, 'utf-8')
+    const parsed = JSON.parse(raw) as Record<string, unknown>
+    if (typeof parsed.serverUrl === 'string' && typeof parsed.secret === 'string') {
+      return { serverUrl: parsed.serverUrl, secret: parsed.secret }
+    }
+    return null
+  } catch {
+    return null
+  }
 }
 
 async function promptConfig(): Promise<Config> {
-  // Open /dev/tty directly so prompts work even when stdin is a pipe (e.g. curl | bash).
-  const rl = readline.createInterface({
-    input: createReadStream('/dev/tty'),
-    output: createWriteStream('/dev/tty'),
-    terminal: true,
-  })
-  console.log('\nClaude Leaderboard Reporter — Setup\n')
-  const name = await ask(rl, 'Your display name: ')
-  const serverUrl = await ask(
-    rl,
-    'Convex site URL (e.g. https://your-deployment.convex.site): '
-  )
-  const secret = await ask(rl, 'Shared secret: ')
-  rl.close()
+  console.log(BANNER)
 
-  if (!name || !serverUrl || !secret) {
-    throw new Error('Name, URL, and secret are all required.')
+  const repoConfig = await loadRepoConfig()
+
+  if (repoConfig) {
+    p.intro(pc.dim('Config loaded — just need your name'))
+
+    const name = await p.text({
+      message: "What's your display name?",
+      placeholder: 'e.g. Archie',
+      validate(value) {
+        if (!value.trim()) return 'Name is required'
+        if (value.trim().length > 20) return 'Keep it under 20 characters'
+        return undefined
+      },
+    })
+
+    if (p.isCancel(name)) {
+      p.cancel('Setup cancelled.')
+      process.exit(0)
+    }
+
+    p.log.info(`${pc.dim('Server:')} ${repoConfig.serverUrl}`)
+    p.log.info(`${pc.dim('Secret:')} ${'*'.repeat(repoConfig.secret.length)}`)
+
+    return {
+      name: name.trim(),
+      serverUrl: repoConfig.serverUrl.replace(/\/$/, ''),
+      secret: repoConfig.secret,
+    }
   }
-  return { name, serverUrl: serverUrl.replace(/\/$/, ''), secret }
+
+  p.intro(pc.dim("Let's get you on the leaderboard"))
+
+  const answers = await p.group(
+    {
+      name: () =>
+        p.text({
+          message: "What's your display name?",
+          placeholder: 'e.g. Archie',
+          validate(value) {
+            if (!value.trim()) return 'Name is required'
+            if (value.trim().length > 20) return 'Keep it under 20 characters'
+            return undefined
+          },
+        }),
+      serverUrl: () =>
+        p.text({
+          message: 'Convex site URL',
+          placeholder: 'https://your-deployment.convex.site',
+          validate(value) {
+            if (!value.trim()) return 'URL is required'
+            try {
+              const url = new URL(value.trim())
+              if (url.protocol !== 'https:' && url.protocol !== 'http:') {
+                return 'Must be a valid http(s) URL'
+              }
+            } catch {
+              return 'Must be a valid http(s) URL'
+            }
+            return undefined
+          },
+        }),
+      secret: () =>
+        p.password({
+          message: 'Shared secret',
+          validate(value) {
+            if (!value.trim()) return 'Secret is required'
+            return undefined
+          },
+        }),
+    },
+    {
+      onCancel() {
+        p.cancel('Setup cancelled.')
+        process.exit(0)
+      },
+    },
+  )
+
+  return {
+    name: (answers.name as string).trim(),
+    serverUrl: (answers.serverUrl as string).trim().replace(/\/$/, ''),
+    secret: (answers.secret as string).trim(),
+  }
 }
 
 async function writeConfig(config: Config): Promise<void> {
@@ -172,7 +265,6 @@ async function writePlist(bunPath: string): Promise<void> {
 }
 
 async function installAgent(uid: number): Promise<void> {
-  // Boot out any existing instance; ignore errors (it may not be loaded).
   await run('/bin/launchctl', ['bootout', `gui/${uid}/${LABEL}`])
   const bootstrap = await run('/bin/launchctl', [
     'bootstrap',
@@ -191,7 +283,7 @@ async function installAgent(uid: number): Promise<void> {
     `gui/${uid}/${LABEL}`,
   ])
   if (kick.code !== 0) {
-    console.warn(`launchctl kickstart warning: ${kick.stderr.trim()}`)
+    p.log.warn(`launchctl kickstart warning: ${kick.stderr.trim()}`)
   }
 }
 
@@ -212,34 +304,36 @@ async function main(): Promise<void> {
 
   const bunPath = await locateBun()
   const config = await promptConfig()
+
+  const s = p.spinner()
+
+  s.start('Writing config')
   await writeConfig(config)
+  s.stop(pc.dim(`Config saved to ${CONFIG_PATH}`))
+
+  s.start('Installing launch agent')
   await writePlist(bunPath)
   await installAgent(uid)
+  s.stop(pc.dim('Launch agent installed and running'))
 
-  console.log(`
-Setup complete.
+  p.note(
+    [
+      `${pc.dim('Config:')}   ${CONFIG_PATH}`,
+      `${pc.dim('Plist:')}    ${PLIST_PATH}`,
+      `${pc.dim('Logs:')}     ${LOG_PATH}`,
+      `${pc.dim('Bun:')}      ${bunPath}`,
+      '',
+      `${pc.dim('Check status:')}  launchctl print gui/${uid}/${LABEL}`,
+      `${pc.dim('Tail logs:')}     tail -f ${LOG_PATH}`,
+      `${pc.dim('Uninstall:')}     bun uninstall.ts`,
+    ].join('\n'),
+    'Details',
+  )
 
-  Config:  ${CONFIG_PATH}
-  Plist:   ${PLIST_PATH}
-  Logs:    ${LOG_PATH}
-  Bun:     ${bunPath}
-
-The reporter is now running in the background and will start automatically
-on every login. To check status:
-
-  launchctl print gui/${uid}/${LABEL}
-
-To tail the log:
-
-  tail -f ${LOG_PATH}
-
-To uninstall:
-
-  bun uninstall.ts
-`)
+  p.outro(`${amber("You're on the board!")} The reporter is running in the background.`)
 }
 
 void main().catch((err) => {
-  console.error('Setup failed:', err instanceof Error ? err.message : err)
+  p.cancel(err instanceof Error ? err.message : String(err))
   process.exit(1)
 })
