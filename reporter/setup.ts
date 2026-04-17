@@ -1,20 +1,11 @@
 import { spawn } from 'child_process'
 import { chmod, mkdir, writeFile, access, readFile } from 'fs/promises'
-import { existsSync, openSync } from 'fs'
-import tty from 'tty'
+import { existsSync, createReadStream, createWriteStream, WriteStream } from 'fs'
+import readline from 'readline'
 import os from 'os'
 import path from 'path'
 import { fileURLToPath } from 'url'
-import * as p from '@clack/prompts'
 import pc from 'picocolors'
-
-// When run via `curl | bash`, process.stdin is the pipe — not a real TTY.
-// Reopen /dev/tty so clack can render prompts and receive keystrokes.
-if (!process.stdin.isTTY) {
-  const fd = openSync('/dev/tty', 'r+')
-  process.stdin = new tty.ReadStream(fd) as NodeJS.ReadStream & { fd: number }
-  process.stdout = new tty.WriteStream(fd) as NodeJS.WriteStream & { fd: number }
-}
 
 interface Config {
   name: string
@@ -56,14 +47,14 @@ const BANNER = `
 
 function assertMacOS(): void {
   if (process.platform !== 'darwin') {
-    p.cancel('This setup script is macOS-only (uses launchd).')
+    console.error(pc.red('✖') + ' This setup script is macOS-only (uses launchd).')
     process.exit(1)
   }
 }
 
 function assertUid(): number {
   if (typeof UID !== 'number') {
-    p.cancel('Cannot read UID.')
+    console.error(pc.red('✖') + ' Cannot read UID.')
     process.exit(1)
   }
   return UID
@@ -130,102 +121,120 @@ async function loadRepoConfig(): Promise<RepoConfig | null> {
   }
 }
 
+// Prompt helpers using readline with explicit /dev/tty so input always works,
+// even when the script is piped via `curl | bash`.
+
+function openTty(): { rl: readline.Interface; ttyOut: WriteStream } {
+  const ttyOut = createWriteStream('/dev/tty')
+  const rl = readline.createInterface({
+    input: createReadStream('/dev/tty'),
+    output: ttyOut,
+    terminal: true,
+  })
+  rl.on('SIGINT', () => {
+    ttyOut.write('\n' + pc.red('✖') + ' Setup cancelled.\n')
+    process.exit(0)
+  })
+  return { rl, ttyOut }
+}
+
+function ask(
+  rl: readline.Interface,
+  ttyOut: WriteStream,
+  label: string,
+  validate?: (v: string) => string | undefined,
+): Promise<string> {
+  return new Promise((resolve) => {
+    const prompt = (): void => {
+      ttyOut.write(pc.cyan('◆') + '  ' + pc.bold(label) + '\n')
+      ttyOut.write(pc.dim('│') + '  ')
+      rl.question('', (raw) => {
+        const value = raw.trim()
+        const error = validate?.(value)
+        if (error) {
+          ttyOut.write(pc.red('│  ✖ ' + error) + '\n')
+          prompt()
+        } else {
+          ttyOut.write(pc.green('◇') + '  ' + pc.dim(value || '(empty)') + '\n')
+          resolve(value)
+        }
+      })
+    }
+    prompt()
+  })
+}
+
+function askPassword(
+  rl: readline.Interface,
+  ttyOut: WriteStream,
+  label: string,
+): Promise<string> {
+  return new Promise((resolve) => {
+    ttyOut.write(pc.cyan('◆') + '  ' + pc.bold(label) + '\n')
+    ttyOut.write(pc.dim('│') + '  ')
+    // Suppress echo by hooking into the readline internals
+    const onKeypress = (): void => { /* noop — readline handles display */ }
+    rl.input?.on('keypress', onKeypress)
+    rl.question('', (raw) => {
+      rl.input?.off('keypress', onKeypress)
+      const value = raw.trim()
+      ttyOut.write(pc.green('◇') + '  ' + pc.dim('*'.repeat(Math.min(value.length, 12))) + '\n')
+      resolve(value)
+    })
+  })
+}
+
+function printStep(ttyOut: WriteStream, msg: string): void {
+  ttyOut.write(pc.dim('│') + '\n')
+  ttyOut.write(pc.dim('◇') + '  ' + pc.dim(msg) + '\n')
+}
+
 interface SetupResult {
   config: Config
   leaderboardUrl: string | null
 }
 
 async function promptConfig(): Promise<SetupResult> {
-  console.log(BANNER)
+  process.stdout.write(BANNER)
 
   const repoConfig = await loadRepoConfig()
+  const { rl, ttyOut } = openTty()
+
+  ttyOut.write(pc.dim('┌  Config loaded — just need your name\n'))
+
+  let serverUrl: string
+  let secret: string
 
   if (repoConfig) {
-    p.intro(pc.dim('Config loaded — just need your name'))
-
-    const name = await p.text({
-      message: "What's your display name?",
-      placeholder: 'e.g. Archie',
-      validate(value) {
-        if (!value.trim()) return 'Name is required'
-        if (value.trim().length > 20) return 'Keep it under 20 characters'
-        return undefined
-      },
+    printStep(ttyOut, `Server: ${repoConfig.serverUrl}`)
+    printStep(ttyOut, `Secret: ${'*'.repeat(repoConfig.secret.length)}`)
+    serverUrl = repoConfig.serverUrl
+    secret = repoConfig.secret
+  } else {
+    serverUrl = await ask(rl, ttyOut, 'Convex site URL', (v) => {
+      if (!v) return 'URL is required'
+      try {
+        const u = new URL(v)
+        if (u.protocol !== 'https:' && u.protocol !== 'http:') return 'Must be http(s)'
+      } catch {
+        return 'Must be a valid URL'
+      }
+      return undefined
     })
-
-    if (p.isCancel(name)) {
-      p.cancel('Setup cancelled.')
-      process.exit(0)
-    }
-
-    p.log.info(`${pc.dim('Server:')} ${repoConfig.serverUrl}`)
-    p.log.info(`${pc.dim('Secret:')} ${'*'.repeat(repoConfig.secret.length)}`)
-
-    return {
-      config: {
-        name: name.trim(),
-        serverUrl: repoConfig.serverUrl.replace(/\/$/, ''),
-        secret: repoConfig.secret,
-      },
-      leaderboardUrl: repoConfig.leaderboardUrl ?? null,
-    }
+    secret = await askPassword(rl, ttyOut, 'Shared secret')
   }
 
-  p.intro(pc.dim("Let's get you on the leaderboard"))
+  const name = await ask(rl, ttyOut, "What's your display name?", (v) => {
+    if (!v) return 'Name is required'
+    if (v.length > 20) return 'Keep it under 20 characters'
+    return undefined
+  })
 
-  const answers = await p.group(
-    {
-      name: () =>
-        p.text({
-          message: "What's your display name?",
-          placeholder: 'e.g. Archie',
-          validate(value) {
-            if (!value.trim()) return 'Name is required'
-            if (value.trim().length > 20) return 'Keep it under 20 characters'
-            return undefined
-          },
-        }),
-      serverUrl: () =>
-        p.text({
-          message: 'Convex site URL',
-          placeholder: 'https://your-deployment.convex.site',
-          validate(value) {
-            if (!value.trim()) return 'URL is required'
-            try {
-              const url = new URL(value.trim())
-              if (url.protocol !== 'https:' && url.protocol !== 'http:') {
-                return 'Must be a valid http(s) URL'
-              }
-            } catch {
-              return 'Must be a valid http(s) URL'
-            }
-            return undefined
-          },
-        }),
-      secret: () =>
-        p.password({
-          message: 'Shared secret',
-          validate(value) {
-            if (!value.trim()) return 'Secret is required'
-            return undefined
-          },
-        }),
-    },
-    {
-      onCancel() {
-        p.cancel('Setup cancelled.')
-        process.exit(0)
-      },
-    },
-  )
+  rl.close()
 
   return {
-    config: {
-      name: (answers.name as string).trim(),
-      serverUrl: (answers.serverUrl as string).trim().replace(/\/$/, ''),
-      secret: (answers.secret as string).trim(),
-    },
-    leaderboardUrl: null,
+    config: { name, serverUrl: serverUrl.replace(/\/$/, ''), secret },
+    leaderboardUrl: repoConfig?.leaderboardUrl ?? null,
   }
 }
 
@@ -302,13 +311,9 @@ async function installAgent(uid: number): Promise<void> {
     )
   }
   await run('/bin/launchctl', ['enable', `gui/${uid}/${LABEL}`])
-  const kick = await run('/bin/launchctl', [
-    'kickstart',
-    '-k',
-    `gui/${uid}/${LABEL}`,
-  ])
+  const kick = await run('/bin/launchctl', ['kickstart', '-k', `gui/${uid}/${LABEL}`])
   if (kick.code !== 0) {
-    p.log.warn(`launchctl kickstart warning: ${kick.stderr.trim()}`)
+    console.warn(pc.yellow('⚠') + ' launchctl kickstart warning: ' + kick.stderr.trim())
   }
 }
 
@@ -322,6 +327,10 @@ async function verifyReporterScript(): Promise<void> {
   }
 }
 
+function log(msg: string): void {
+  process.stdout.write(msg + '\n')
+}
+
 async function main(): Promise<void> {
   assertMacOS()
   const uid = assertUid()
@@ -330,39 +339,36 @@ async function main(): Promise<void> {
   const bunPath = await locateBun()
   const { config, leaderboardUrl } = await promptConfig()
 
-  const s = p.spinner()
-
-  s.start('Writing config')
+  log('')
+  log(pc.dim('◇') + '  Writing config...')
   await writeConfig(config)
-  s.stop(pc.dim(`Config saved to ${CONFIG_PATH}`))
+  log(pc.green('◇') + '  ' + pc.dim(`Config saved → ${CONFIG_PATH}`))
 
-  s.start('Installing launch agent')
+  log(pc.dim('◇') + '  Installing launch agent...')
   await writePlist(bunPath)
   await installAgent(uid)
-  s.stop(pc.dim('Launch agent installed and running'))
+  log(pc.green('◇') + '  ' + pc.dim('Launch agent installed and running'))
 
-  p.note(
-    [
-      `${pc.dim('Config:')}   ${CONFIG_PATH}`,
-      `${pc.dim('Plist:')}    ${PLIST_PATH}`,
-      `${pc.dim('Logs:')}     ${LOG_PATH}`,
-      `${pc.dim('Bun:')}      ${bunPath}`,
-      '',
-      `${pc.dim('Check status:')}  launchctl print gui/${uid}/${LABEL}`,
-      `${pc.dim('Tail logs:')}     tail -f ${LOG_PATH}`,
-      `${pc.dim('Uninstall:')}     bun uninstall.ts`,
-    ].join('\n'),
-    'Details',
-  )
-
-  const outroLines = [`${amber("You're on the board!")} The reporter is running in the background.`]
+  log('')
+  log(pc.dim('┌  Details'))
+  log(pc.dim(`│  Config:  ${CONFIG_PATH}`))
+  log(pc.dim(`│  Plist:   ${PLIST_PATH}`))
+  log(pc.dim(`│  Logs:    ${LOG_PATH}`))
+  log(pc.dim(`│  Bun:     ${bunPath}`))
+  log(pc.dim('│'))
+  log(pc.dim(`│  Check:   launchctl print gui/${uid}/${LABEL}`))
+  log(pc.dim(`│  Logs:    tail -f ${LOG_PATH}`))
+  log(pc.dim(`│  Remove:  bun uninstall.ts`))
+  log(pc.dim('└'))
+  log('')
+  log(amber('◇') + '  ' + pc.bold(amber("You're on the board!")) + ' The reporter is running in the background.')
   if (leaderboardUrl) {
-    outroLines.push(`\n  ${amber('→')} View the leaderboard: ${pc.underline(pc.cyan(leaderboardUrl))}`)
+    log(amber('  →') + ' View the leaderboard: ' + pc.underline(pc.cyan(leaderboardUrl)))
   }
-  p.outro(outroLines.join(''))
+  log('')
 }
 
 void main().catch((err) => {
-  p.cancel(err instanceof Error ? err.message : String(err))
+  console.error(pc.red('✖') + ' ' + (err instanceof Error ? err.message : String(err)))
   process.exit(1)
 })
