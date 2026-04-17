@@ -1,6 +1,6 @@
 import { spawn } from 'child_process'
 import { chmod, mkdir, writeFile, access, readFile } from 'fs/promises'
-import { existsSync, createReadStream, createWriteStream, WriteStream } from 'fs'
+import { existsSync, createReadStream } from 'fs'
 import readline from 'readline'
 import os from 'os'
 import path from 'path'
@@ -121,72 +121,44 @@ async function loadRepoConfig(): Promise<RepoConfig | null> {
   }
 }
 
-// Prompt helpers using readline with explicit /dev/tty so input always works,
-// even when the script is piped via `curl | bash`.
+// Prompt helpers using readline with explicit /dev/tty for input and
+// process.stdout for output — so all output goes through one stream
+// and avoids interleaving when run via `curl | bash`.
 
-function openTty(): { rl: readline.Interface; ttyOut: WriteStream } {
-  const ttyOut = createWriteStream('/dev/tty')
+function openRl(): readline.Interface {
   const rl = readline.createInterface({
     input: createReadStream('/dev/tty'),
-    output: ttyOut,
+    output: process.stdout,
     terminal: true,
   })
   rl.on('SIGINT', () => {
-    ttyOut.write('\n' + pc.red('✖') + ' Setup cancelled.\n')
+    process.stdout.write('\n' + pc.red('✖') + ' Setup cancelled.\n')
     process.exit(0)
   })
-  return { rl, ttyOut }
+  return rl
 }
 
 function ask(
   rl: readline.Interface,
-  ttyOut: WriteStream,
   label: string,
   validate?: (v: string) => string | undefined,
 ): Promise<string> {
   return new Promise((resolve) => {
     const prompt = (): void => {
-      ttyOut.write(pc.cyan('◆') + '  ' + pc.bold(label) + '\n')
-      ttyOut.write(pc.dim('│') + '  ')
+      process.stdout.write(pc.cyan('◆') + '  ' + pc.bold(label) + '\n' + pc.dim('│') + '  ')
       rl.question('', (raw) => {
         const value = raw.trim()
         const error = validate?.(value)
         if (error) {
-          ttyOut.write(pc.red('│  ✖ ' + error) + '\n')
+          process.stdout.write(pc.red('│  ✖ ' + error) + '\n')
           prompt()
         } else {
-          ttyOut.write(pc.green('◇') + '  ' + pc.dim(value || '(empty)') + '\n')
           resolve(value)
         }
       })
     }
     prompt()
   })
-}
-
-function askPassword(
-  rl: readline.Interface,
-  ttyOut: WriteStream,
-  label: string,
-): Promise<string> {
-  return new Promise((resolve) => {
-    ttyOut.write(pc.cyan('◆') + '  ' + pc.bold(label) + '\n')
-    ttyOut.write(pc.dim('│') + '  ')
-    // Suppress echo by hooking into the readline internals
-    const onKeypress = (): void => { /* noop — readline handles display */ }
-    rl.input?.on('keypress', onKeypress)
-    rl.question('', (raw) => {
-      rl.input?.off('keypress', onKeypress)
-      const value = raw.trim()
-      ttyOut.write(pc.green('◇') + '  ' + pc.dim('*'.repeat(Math.min(value.length, 12))) + '\n')
-      resolve(value)
-    })
-  })
-}
-
-function printStep(ttyOut: WriteStream, msg: string): void {
-  ttyOut.write(pc.dim('│') + '\n')
-  ttyOut.write(pc.dim('◇') + '  ' + pc.dim(msg) + '\n')
 }
 
 interface SetupResult {
@@ -198,20 +170,20 @@ async function promptConfig(): Promise<SetupResult> {
   process.stdout.write(BANNER)
 
   const repoConfig = await loadRepoConfig()
-  const { rl, ttyOut } = openTty()
-
-  ttyOut.write(pc.dim('┌  Config loaded — just need your name\n'))
+  const rl = openRl()
 
   let serverUrl: string
   let secret: string
 
   if (repoConfig) {
-    printStep(ttyOut, `Server: ${repoConfig.serverUrl}`)
-    printStep(ttyOut, `Secret: ${'*'.repeat(repoConfig.secret.length)}`)
+    process.stdout.write(pc.dim('┌  Config loaded — just need your name\n'))
+    process.stdout.write(pc.dim(`│  Server: ${repoConfig.serverUrl}\n`))
+    process.stdout.write(pc.dim(`│  Secret: ${'*'.repeat(repoConfig.secret.length)}\n`))
     serverUrl = repoConfig.serverUrl
     secret = repoConfig.secret
   } else {
-    serverUrl = await ask(rl, ttyOut, 'Convex site URL', (v) => {
+    process.stdout.write(pc.dim('┌  Let\'s get you on the leaderboard\n'))
+    serverUrl = await ask(rl, 'Convex site URL', (v) => {
       if (!v) return 'URL is required'
       try {
         const u = new URL(v)
@@ -221,10 +193,10 @@ async function promptConfig(): Promise<SetupResult> {
       }
       return undefined
     })
-    secret = await askPassword(rl, ttyOut, 'Shared secret')
+    secret = await ask(rl, 'Shared secret')
   }
 
-  const name = await ask(rl, ttyOut, "What's your display name?", (v) => {
+  const name = await ask(rl, "What's your display name?", (v) => {
     if (!v) return 'Name is required'
     if (v.length > 20) return 'Keep it under 20 characters'
     return undefined
@@ -298,8 +270,11 @@ async function writePlist(bunPath: string): Promise<void> {
   await writeFile(PLIST_PATH, buildPlist(bunPath), 'utf-8')
 }
 
+const sleep = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms))
+
 async function installAgent(uid: number): Promise<void> {
   await run('/bin/launchctl', ['bootout', `gui/${uid}/${LABEL}`])
+  await sleep(500) // give launchd time to fully unload before re-bootstrapping
   const bootstrap = await run('/bin/launchctl', [
     'bootstrap',
     `gui/${uid}`,
