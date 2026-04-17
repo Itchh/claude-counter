@@ -16,6 +16,7 @@ interface Config {
 interface RepoConfig {
   serverUrl: string
   secret: string
+  leaderboardUrl?: string
 }
 
 const HOME = os.homedir()
@@ -108,7 +109,11 @@ async function loadRepoConfig(): Promise<RepoConfig | null> {
     const raw = await readFile(REPO_CONFIG_PATH, 'utf-8')
     const parsed = JSON.parse(raw) as Record<string, unknown>
     if (typeof parsed.serverUrl === 'string' && typeof parsed.secret === 'string') {
-      return { serverUrl: parsed.serverUrl, secret: parsed.secret }
+      return {
+        serverUrl: parsed.serverUrl,
+        secret: parsed.secret,
+        ...(typeof parsed.leaderboardUrl === 'string' && { leaderboardUrl: parsed.leaderboardUrl }),
+      }
     }
     return null
   } catch {
@@ -116,7 +121,12 @@ async function loadRepoConfig(): Promise<RepoConfig | null> {
   }
 }
 
-async function promptConfig(): Promise<Config> {
+interface SetupResult {
+  config: Config
+  leaderboardUrl: string | null
+}
+
+async function promptConfig(): Promise<SetupResult> {
   console.log(BANNER)
 
   const repoConfig = await loadRepoConfig()
@@ -143,9 +153,12 @@ async function promptConfig(): Promise<Config> {
     p.log.info(`${pc.dim('Secret:')} ${'*'.repeat(repoConfig.secret.length)}`)
 
     return {
-      name: name.trim(),
-      serverUrl: repoConfig.serverUrl.replace(/\/$/, ''),
-      secret: repoConfig.secret,
+      config: {
+        name: name.trim(),
+        serverUrl: repoConfig.serverUrl.replace(/\/$/, ''),
+        secret: repoConfig.secret,
+      },
+      leaderboardUrl: repoConfig.leaderboardUrl ?? null,
     }
   }
 
@@ -198,9 +211,12 @@ async function promptConfig(): Promise<Config> {
   )
 
   return {
-    name: (answers.name as string).trim(),
-    serverUrl: (answers.serverUrl as string).trim().replace(/\/$/, ''),
-    secret: (answers.secret as string).trim(),
+    config: {
+      name: (answers.name as string).trim(),
+      serverUrl: (answers.serverUrl as string).trim().replace(/\/$/, ''),
+      secret: (answers.secret as string).trim(),
+    },
+    leaderboardUrl: null,
   }
 }
 
@@ -303,7 +319,7 @@ async function main(): Promise<void> {
   await verifyReporterScript()
 
   const bunPath = await locateBun()
-  const config = await promptConfig()
+  const { config, leaderboardUrl } = await promptConfig()
 
   const s = p.spinner()
 
@@ -330,7 +346,11 @@ async function main(): Promise<void> {
     'Details',
   )
 
-  p.outro(`${amber("You're on the board!")} The reporter is running in the background.`)
+  const outroLines = [`${amber("You're on the board!")} The reporter is running in the background.`]
+  if (leaderboardUrl) {
+    outroLines.push(`\n  ${amber('→')} View the leaderboard: ${pc.underline(pc.cyan(leaderboardUrl))}`)
+  }
+  p.outro(outroLines.join(''))
 }
 
 void main().catch((err) => {
