@@ -11,7 +11,6 @@
     "logs": "tail -f $HOME/Library/Logs/leaderboard-reporter.log"
   },
   "dependencies": {
-    "@clack/prompts": "^1.2.0",
     "chokidar": "^3.6.0",
     "picocolors": "^1.1.1"
   },
