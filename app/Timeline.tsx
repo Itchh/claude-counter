@@ -3,6 +3,7 @@
 import { useState, useMemo } from 'react'
 import { useQuery } from 'convex/react'
 import { api } from '../convex/_generated/api'
+import { motion, AnimatePresence } from 'motion/react'
 import {
   LineChart,
   Line,
@@ -57,7 +58,10 @@ interface CustomTooltipProps {
 function CustomTooltip({ active, payload, label, rangeMs }: CustomTooltipProps): React.ReactElement | null {
   if (!active || !payload?.length || !label) return null
   return (
-    <div
+    <motion.div
+      initial={{ opacity: 0, y: 4 }}
+      animate={{ opacity: 1, y: 0 }}
+      transition={{ duration: 0.15 }}
       style={{
         background: '#12122a',
         border: '1px solid #2a2a4a',
@@ -71,47 +75,78 @@ function CustomTooltip({ active, payload, label, rangeMs }: CustomTooltipProps):
       </div>
       {payload.map((entry) => (
         <div key={entry.dataKey} style={{ color: entry.color, marginBottom: 2 }}>
-          {entry.name}: {fmtTokensShort(entry.value)}
+          {entry.name}: {fmtTokensShort(entry.value)}/hr
         </div>
       ))}
-    </div>
+    </motion.div>
   )
 }
 
 export function Timeline(): React.ReactElement {
   const [rangeIdx, setRangeIdx] = useState(0)
   const range = RANGES[rangeIdx]
-  const timeline = useQuery(api.leaderboard.getTimeline, { rangeMs: range.ms })
+  const data = useQuery(api.leaderboard.getTimeline, { rangeMs: range.ms })
+  const users = data?.users ?? []
 
-  // Build unified time-series: merge all user points onto shared timestamps
+  // Build time-series showing token consumption rate (tokens/hr)
   const chartData = useMemo(() => {
-    if (!timeline) return []
+    if (!data || users.length === 0) return []
+
+    const MS_PER_HOUR = 3_600_000
+
+    // Compute rate between consecutive snapshots for each user
+    const userRates = new Map<string, Array<{ t: number; rate: number }>>()
+    for (const user of users) {
+      const rates: Array<{ t: number; rate: number }> = []
+      for (let i = 0; i < user.points.length - 1; i++) {
+        const dt = user.points[i + 1].t - user.points[i].t
+        const dv = user.points[i + 1].v - user.points[i].v
+        if (dt > 0) {
+          rates.push({ t: user.points[i].t, rate: Math.max(0, (dv / dt) * MS_PER_HOUR) })
+        }
+      }
+      // Add a final point at the last timestamp with rate 0 (no data after this)
+      if (user.points.length > 0) {
+        rates.push({ t: user.points[user.points.length - 1].t, rate: 0 })
+      }
+      userRates.set(user.key, rates)
+    }
+
+    // Collect all timestamps
     const allTimestamps = new Set<number>()
-    for (const user of timeline) {
-      for (const p of user.points) {
-        allTimestamps.add(p.t)
+    for (const rates of userRates.values()) {
+      for (const r of rates) {
+        allTimestamps.add(r.t)
       }
     }
     const sortedTimestamps = Array.from(allTimestamps).sort((a, b) => a - b)
 
     return sortedTimestamps.map((t) => {
-      const row: Record<string, number> = { timestamp: t }
-      for (const user of timeline) {
-        // Find closest point at or before this timestamp
-        let val = 0
-        for (const p of user.points) {
-          if (p.t <= t) val = p.v
+      const row: Record<string, number | undefined> = { timestamp: t }
+      for (const user of users) {
+        const rates = userRates.get(user.key)
+        if (!rates || rates.length === 0) {
+          row[user.key] = undefined
+          continue
+        }
+        // Find the rate active at time t (last rate where rate.t <= t)
+        let rate: number | undefined
+        for (const r of rates) {
+          if (r.t <= t) rate = r.rate
           else break
         }
-        row[user.key] = val
+        row[user.key] = rate
       }
       return row
     })
-  }, [timeline])
+  }, [data, users])
 
-  if (!timeline || timeline.length === 0) {
+  if (!data || users.length === 0) {
     return (
-      <div
+      <motion.div
+        initial={{ opacity: 0 }}
+        animate={{ opacity: 1 }}
+        transition={{ duration: 0.4 }}
         style={{
           height: '100%',
           display: 'flex',
@@ -123,7 +158,7 @@ export function Timeline(): React.ReactElement {
         }}
       >
         COLLECTING TIMELINE DATA...
-      </div>
+      </motion.div>
     )
   }
 
@@ -139,13 +174,19 @@ export function Timeline(): React.ReactElement {
         }}
       >
         {RANGES.map((r, i) => (
-          <button
+          <motion.button
             key={r.label}
             onClick={() => setRangeIdx(i)}
-            style={{
-              background: i === rangeIdx ? '#2a2a4a' : 'transparent',
-              border: `1px solid ${i === rangeIdx ? '#5e5e7e' : '#1a1a3a'}`,
+            whileHover={{ scale: 1.1 }}
+            whileTap={{ scale: 0.95 }}
+            animate={{
+              background: i === rangeIdx ? '#2a2a4a' : 'rgba(0,0,0,0)',
+              borderColor: i === rangeIdx ? '#5e5e7e' : '#1a1a3a',
               color: i === rangeIdx ? '#00f0ff' : '#3a3a5a',
+            }}
+            transition={{ duration: 0.2 }}
+            style={{
+              border: '1px solid',
               padding: '2px 8px',
               fontSize: 'clamp(9px, 0.9vw, 11px)',
               fontFamily: "ui-monospace, 'Cascadia Code', monospace",
@@ -154,58 +195,61 @@ export function Timeline(): React.ReactElement {
             }}
           >
             {r.label}
-          </button>
+          </motion.button>
         ))}
       </div>
 
       {/* Chart */}
-      <div style={{ flex: 1, minHeight: 0 }}>
-        <ResponsiveContainer width="100%" height="100%">
-          <LineChart data={chartData} margin={{ top: 4, right: 12, bottom: 4, left: 12 }}>
-            <XAxis
-              dataKey="timestamp"
-              type="number"
-              domain={['dataMin', 'dataMax']}
-              tickFormatter={(v: number) => formatTimeLabel(v, range.ms)}
-              tick={{ fill: '#3a3a5a', fontSize: 10, fontFamily: "ui-monospace, 'Cascadia Code', monospace" }}
-              axisLine={{ stroke: '#1a1a3a' }}
-              tickLine={false}
-              minTickGap={40}
-            />
-            <YAxis
-              tickFormatter={(v: number) => fmtTokensShort(v)}
-              tick={{ fill: '#3a3a5a', fontSize: 10, fontFamily: "ui-monospace, 'Cascadia Code', monospace" }}
-              axisLine={{ stroke: '#1a1a3a' }}
-              tickLine={false}
-              width={50}
-            />
-            <Tooltip
-              content={<CustomTooltip rangeMs={range.ms} />}
-              cursor={{ stroke: '#2a2a4a', strokeWidth: 1 }}
-            />
-            {timeline.map((user, i) => (
-              <Line
-                key={user.key}
-                dataKey={user.key}
-                name={user.name}
-                type="stepAfter"
-                stroke={user.color ?? DEFAULT_COLORS[i % DEFAULT_COLORS.length]}
-                strokeWidth={2}
-                dot={false}
-                activeDot={{
-                  r: 3,
-                  fill: user.color ?? DEFAULT_COLORS[i % DEFAULT_COLORS.length],
-                  stroke: '#08080f',
-                  strokeWidth: 1,
-                }}
-                style={{
-                  filter: `drop-shadow(0 0 4px ${user.color ?? DEFAULT_COLORS[i % DEFAULT_COLORS.length]}66)`,
-                }}
+      <AnimatePresence mode="wait">
+        <motion.div
+          key={rangeIdx}
+          initial={{ opacity: 0 }}
+          animate={{ opacity: 1 }}
+          exit={{ opacity: 0 }}
+          transition={{ duration: 0.2 }}
+          style={{ flex: 1, minHeight: 0 }}
+        >
+          <ResponsiveContainer width="100%" height={130}>
+            <LineChart data={chartData} margin={{ top: 4, right: 12, bottom: 4, left: 12 }}>
+              <XAxis
+                dataKey="timestamp"
+                type="number"
+                domain={[data?.since ?? 'dataMin', data?.now ?? 'dataMax']}
+                tickFormatter={(v: number) => formatTimeLabel(v, range.ms)}
+                tick={{ fill: '#3a3a5a', fontSize: 10, fontFamily: "ui-monospace, 'Cascadia Code', monospace" }}
+                axisLine={{ stroke: '#1a1a3a' }}
+                tickLine={false}
+                minTickGap={40}
               />
-            ))}
-          </LineChart>
-        </ResponsiveContainer>
-      </div>
+              <YAxis
+                tickFormatter={(v: number) => `${fmtTokensShort(v)}/h`}
+                tick={{ fill: '#3a3a5a', fontSize: 10, fontFamily: "ui-monospace, 'Cascadia Code', monospace" }}
+                axisLine={{ stroke: '#1a1a3a' }}
+                tickLine={false}
+                width={50}
+                domain={[0, 'dataMax']}
+              />
+              <Tooltip
+                content={<CustomTooltip rangeMs={range.ms} />}
+                cursor={{ stroke: '#2a2a4a', strokeWidth: 1 }}
+              />
+              {users.map((user, i) => (
+                <Line
+                  key={user.key}
+                  dataKey={user.key}
+                  name={user.name}
+                  type="stepAfter"
+                  stroke={user.color ?? DEFAULT_COLORS[i % DEFAULT_COLORS.length]}
+                  strokeWidth={2}
+                  dot={false}
+                  activeDot={{ r: 3, stroke: '#08080f', strokeWidth: 1 }}
+                  isAnimationActive={false}
+                />
+              ))}
+            </LineChart>
+          </ResponsiveContainer>
+        </motion.div>
+      </AnimatePresence>
     </div>
   )
 }
