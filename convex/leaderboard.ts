@@ -108,35 +108,56 @@ export const upsertEntry = internalMutation({
   },
 })
 
+const MAX_POINTS_PER_USER = 150
+const MAX_SNAPSHOT_FETCH = 10000
+
 export const getTimeline = query({
   args: {
     rangeMs: v.number(),
   },
   handler: async (ctx, { rangeMs }) => {
-    const since = Date.now() - rangeMs
+    const now = Date.now()
+    const since = now - rangeMs
+
+    const minInterval = rangeMs / MAX_POINTS_PER_USER
+
     const snapshots = await ctx.db
       .query("snapshots")
       .withIndex("by_timestamp", (q) => q.gte("timestamp", since))
-      .take(5000)
+      .take(MAX_SNAPSHOT_FETCH)
 
     // Group by user key
     const byUser = new Map<string, { key: string; name: string; color: string | null; points: Array<{ t: number; v: number }> }>()
 
     for (const snap of snapshots) {
-      let user = byUser.get(snap.key)
+      const userKey = snap.name.toLowerCase()
+      let user = byUser.get(userKey)
       if (!user) {
-        user = { key: snap.key, name: snap.name, color: snap.color ?? null, points: [] }
-        byUser.set(snap.key, user)
+        user = { key: userKey, name: snap.name, color: snap.color ?? null, points: [] }
+        byUser.set(userKey, user)
       }
       user.points.push({ t: snap.timestamp, v: snap.totalTokens })
       if (snap.color) user.color = snap.color
     }
 
-    // Sort points by time
+    // Sort and downsample each user's points
     for (const user of byUser.values()) {
       user.points.sort((a, b) => a.t - b.t)
+
+      if (user.points.length > MAX_POINTS_PER_USER) {
+        const sampled: Array<{ t: number; v: number }> = [user.points[0]]
+        let lastKept = user.points[0].t
+        for (let i = 1; i < user.points.length - 1; i++) {
+          if (user.points[i].t - lastKept >= minInterval) {
+            sampled.push(user.points[i])
+            lastKept = user.points[i].t
+          }
+        }
+        sampled.push(user.points[user.points.length - 1])
+        user.points = sampled
+      }
     }
 
-    return Array.from(byUser.values())
+    return { since, now, users: Array.from(byUser.values()) }
   },
 })

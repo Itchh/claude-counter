@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { useQuery } from 'convex/react'
 import { api } from '../convex/_generated/api'
+import { motion, AnimatePresence, useSpring, useTransform } from 'motion/react'
 import type { LeaderboardEntry } from '@/types'
 import { fmtTokens, fmtTokensShort, fmtTime } from '@/lib/formatters'
 import { Timeline } from './Timeline'
@@ -31,41 +32,81 @@ function useClockTime(): string {
   return time
 }
 
-function rankColor(rank: number): string {
+function fallbackColor(rank: number): string {
   if (rank === 1) return '#ff2d95'
   if (rank <= 3) return '#00f0ff'
   return '#7a7a9e'
 }
 
-function tokenColor(rank: number): string {
+function rankColor(rank: number, userColor: string | null): string {
+  return userColor ?? fallbackColor(rank)
+}
+
+function tokenColor(rank: number, userColor: string | null): string {
+  if (userColor) return userColor
   if (rank === 1) return '#ff2d95'
   if (rank <= 3) return '#00d4e0'
   return '#5e5e7e'
 }
 
-function barColor(rank: number): string {
-  if (rank === 1) return '#ff2d95'
-  if (rank <= 3) return '#00f0ff'
-  return '#2a2a4a'
-}
-
-function barTrackColor(rank: number): string {
+function barTrackColor(rank: number, userColor: string | null): string {
+  if (userColor) return `${userColor}1f`
   if (rank === 1) return 'rgba(255, 45, 149, 0.12)'
   if (rank <= 3) return 'rgba(0, 240, 255, 0.08)'
   return 'rgba(42, 42, 74, 0.3)'
 }
 
-function rankNumberColor(rank: number): string {
-  if (rank === 1) return '#ff2d95'
-  if (rank <= 3) return '#00f0ff'
-  return '#5e5e7e'
+function rankNumberColor(rank: number, userColor: string | null): string {
+  return userColor ?? fallbackColor(rank)
+}
+
+function darkenHex(hex: string, amount: number): string {
+  const r = Math.max(0, parseInt(hex.slice(1, 3), 16) - amount)
+  const g = Math.max(0, parseInt(hex.slice(3, 5), 16) - amount)
+  const b = Math.max(0, parseInt(hex.slice(5, 7), 16) - amount)
+  return `#${r.toString(16).padStart(2, '0')}${g.toString(16).padStart(2, '0')}${b.toString(16).padStart(2, '0')}`
+}
+
+function barGradient(rank: number, userColor: string | null): string {
+  if (userColor) {
+    const dark = darkenHex(userColor, 40)
+    return `repeating-linear-gradient(90deg, ${userColor} 0px, ${userColor} 4px, ${dark} 4px, ${dark} 6px)`
+  }
+  if (rank === 1) return 'repeating-linear-gradient(90deg, #ff2d95 0px, #ff2d95 4px, #cc1a75 4px, #cc1a75 6px)'
+  if (rank <= 3) return 'repeating-linear-gradient(90deg, #00f0ff 0px, #00f0ff 4px, #00b8c4 4px, #00b8c4 6px)'
+  return 'repeating-linear-gradient(90deg, #2a2a4a 0px, #2a2a4a 4px, #1e1e3a 4px, #1e1e3a 6px)'
+}
+
+function barShadow(rank: number, userColor: string | null): string {
+  if (userColor) return `0 0 8px ${userColor}60, 0 0 16px ${userColor}30`
+  if (rank === 1) return '0 0 8px #ff2d9560, 0 0 16px #ff2d9530'
+  if (rank <= 3) return '0 0 6px rgba(0, 240, 255, 0.2)'
+  return 'none'
+}
+
+function glowShadow(rank: number, userColor: string | null): string {
+  const c = userColor ?? (rank === 1 ? '#ff2d95' : '#00f0ff')
+  return `0 0 8px ${c}66`
+}
+
+function AnimatedTokens({ value, formatter }: { value: number; formatter: (n: number) => string }): React.ReactElement {
+  const spring = useSpring(0, { stiffness: 120, damping: 20 })
+  const display = useTransform(spring, (v) => formatter(Math.round(v)))
+  const [text, setText] = useState(formatter(0))
+
+  useEffect(() => {
+    spring.set(value)
+  }, [spring, value])
+
+  useEffect(() => {
+    const unsubscribe = display.on('change', (v) => setText(v))
+    return unsubscribe
+  }, [display])
+
+  return <>{text}</>
 }
 
 const STYLES = `
-  @keyframes fadeIn {
-    from { opacity: 0; transform: translateY(12px); }
-    to { opacity: 1; transform: translateY(0); }
-  }
   @keyframes flashUp {
     0% { background: rgba(0, 255, 136, 0.3); }
     100% { background: transparent; }
@@ -79,15 +120,15 @@ const STYLES = `
     50% { opacity: 0; }
   }
   @keyframes crownPulse {
-    0%, 100% { text-shadow: 0 0 8px #ff2d95, 0 0 20px #ff2d9580; }
-    50% { text-shadow: 0 0 16px #ff2d95, 0 0 40px #ff2d95aa, 0 0 60px #ff2d9544; }
+    0%, 100% { text-shadow: 0 0 8px var(--uc, #ff2d95), 0 0 20px color-mix(in srgb, var(--uc, #ff2d95) 50%, transparent); }
+    50% { text-shadow: 0 0 16px var(--uc, #ff2d95), 0 0 40px color-mix(in srgb, var(--uc, #ff2d95) 67%, transparent), 0 0 60px color-mix(in srgb, var(--uc, #ff2d95) 27%, transparent); }
   }
   @keyframes namePulse {
     0%, 100% {
-      text-shadow: 0 0 10px #ff2d95, 0 0 30px #ff2d9580, 0 0 50px #ff2d9540;
+      text-shadow: 0 0 10px var(--uc, #ff2d95), 0 0 30px color-mix(in srgb, var(--uc, #ff2d95) 50%, transparent), 0 0 50px color-mix(in srgb, var(--uc, #ff2d95) 25%, transparent);
     }
     50% {
-      text-shadow: 0 0 20px #ff2d95, 0 0 50px #ff2d95aa, 0 0 80px #ff2d9566;
+      text-shadow: 0 0 20px var(--uc, #ff2d95), 0 0 50px color-mix(in srgb, var(--uc, #ff2d95) 67%, transparent), 0 0 80px color-mix(in srgb, var(--uc, #ff2d95) 40%, transparent);
     }
   }
   @keyframes glitch {
@@ -155,7 +196,6 @@ const STYLES = `
 
   .bar-block {
     height: clamp(10px, 1.2vw, 16px);
-    transition: width 1s cubic-bezier(0.25, 0.46, 0.45, 0.94);
     image-rendering: pixelated;
   }
   .bar-track {
@@ -247,7 +287,10 @@ export default function LeaderboardPage(): React.ReactElement {
       <div className="scanline-bar" />
 
       {/* TOP BAR */}
-      <div
+      <motion.div
+        initial={{ opacity: 0, y: -10 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ duration: 0.5 }}
         style={{
           padding: '20px 36px',
           display: 'flex',
@@ -275,7 +318,7 @@ export default function LeaderboardPage(): React.ReactElement {
         >
           {clock}
         </span>
-      </div>
+      </motion.div>
 
       {/* LEADERBOARD */}
       <div
@@ -287,172 +330,164 @@ export default function LeaderboardPage(): React.ReactElement {
           padding: '0 36px',
         }}
       >
-        {!data || data.leaderboard.length === 0 ? (
-          <div
-            style={{
-              textAlign: 'center',
-              fontSize: 'clamp(16px, 2.2vw, 28px)',
-              color: '#ff2d95',
-              textShadow: '0 0 20px #ff2d9580',
-            }}
-          >
-            <span style={{ animation: 'blink 1.2s step-end infinite' }}>
-              _
-            </span>{' '}
-            AWAITING REPORTERS...
-          </div>
-        ) : (
-          data.leaderboard.map((entry: LeaderboardEntry, i: number) => {
-            const key = entry.name.toLowerCase()
-            const flash = flashMap[key]
-            const ratio = entry.totalTokens / maxTokens
-            const isFirst = entry.rank === 1
+        <AnimatePresence mode="popLayout">
+          {!data || data.leaderboard.length === 0 ? (
+            <motion.div
+              key="empty"
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              style={{
+                textAlign: 'center',
+                fontSize: 'clamp(16px, 2.2vw, 28px)',
+                color: '#ff2d95',
+                textShadow: '0 0 20px #ff2d9580',
+              }}
+            >
+              <span style={{ animation: 'blink 1.2s step-end infinite' }}>
+                _
+              </span>{' '}
+              AWAITING REPORTERS...
+            </motion.div>
+          ) : (
+            data.leaderboard.map((entry: LeaderboardEntry, i: number) => {
+              const key = entry.name.toLowerCase()
+              const flash = flashMap[key]
+              const ratio = entry.totalTokens / maxTokens
+              const isFirst = entry.rank === 1
 
-            return (
-              <div
-                key={key}
-                className={
-                  flash === 'up'
-                    ? 'flash-up'
-                    : flash === 'down'
-                      ? 'flash-down'
-                      : ''
-                }
-                style={{
-                  display: 'flex',
-                  alignItems: 'center',
-                  gap: '20px',
-                  animation: loaded
-                    ? undefined
-                    : `fadeIn 0.4s ease-out ${i * 0.1}s both`,
-                }}
-              >
-                {/* RANK */}
-                <span
+              return (
+                <motion.div
+                  key={key}
+                  layout
+                  initial={{ opacity: 0, y: 20, scale: 0.97 }}
+                  animate={{ opacity: 1, y: 0, scale: 1 }}
+                  exit={{ opacity: 0, scale: 0.95, transition: { duration: 0.2 } }}
+                  transition={{
+                    layout: { type: 'spring', stiffness: 300, damping: 30 },
+                    opacity: { duration: 0.3, delay: loaded ? 0 : i * 0.08 },
+                    y: { type: 'spring', stiffness: 200, damping: 25, delay: loaded ? 0 : i * 0.08 },
+                    scale: { duration: 0.2, delay: loaded ? 0 : i * 0.08 },
+                  }}
+                  whileHover={{ scale: 1.01, transition: { duration: 0.15 } }}
+                  className={
+                    flash === 'up'
+                      ? 'flash-up'
+                      : flash === 'down'
+                        ? 'flash-down'
+                        : ''
+                  }
                   style={{
-                    width: '2.5ch',
-                    textAlign: 'right',
-                    color: rankNumberColor(entry.rank),
-                    fontSize: 'clamp(13px, 1.6vw, 20px)',
-                    ...(isFirst
-                      ? {
-                          textShadow: '0 0 10px #ff2d9580',
-                        }
-                      : {}),
+                    display: 'flex',
+                    alignItems: 'flex-end',
+                    gap: '20px',
                   }}
                 >
-                  {String(entry.rank).padStart(2, '0')}
-                </span>
-
-                {/* ONLINE DOT */}
-                <span
-                  className={`online-dot ${entry.isOnline ? 'online-dot-active' : 'online-dot-inactive'}`}
-                />
-
-                {/* NAME */}
-                <span
-                  style={{
-                    flex: '0 0 auto',
-                    minWidth: '8ch',
-                    color: rankColor(entry.rank),
-                    fontSize: 'clamp(16px, 2.2vw, 28px)',
-                    fontWeight: 700,
-                    ...(isFirst
-                      ? {
-                          animation: 'namePulse 3s ease-in-out infinite',
-                        }
-                      : entry.rank <= 3
+                  {/* RANK */}
+                  <motion.span
+                    layout="position"
+                    style={{
+                      width: '2.5ch',
+                      textAlign: 'right',
+                      color: rankNumberColor(entry.rank, entry.color),
+                      fontSize: 'clamp(13px, 1.6vw, 20px)',
+                      ...(isFirst || entry.color
                         ? {
-                            textShadow: '0 0 8px rgba(0, 240, 255, 0.4)',
+                            textShadow: `0 0 10px ${rankNumberColor(entry.rank, entry.color)}80`,
                           }
                         : {}),
-                  }}
-                >
-                  {isFirst ? '\u2666 ' : ''}
-                  {entry.name.toUpperCase()}
-                </span>
+                    }}
+                  >
+                    {String(entry.rank).padStart(2, '0')}
+                  </motion.span>
 
-                {/* TOKEN COUNT */}
-                <span
-                  style={{
-                    flex: '0 0 auto',
-                    minWidth: '6ch',
-                    textAlign: 'right',
-                    color: tokenColor(entry.rank),
-                    fontSize: 'clamp(13px, 1.6vw, 20px)',
-                    fontVariantNumeric: 'tabular-nums',
-                    ...(isFirst
-                      ? { textShadow: '0 0 8px #ff2d9560' }
-                      : {}),
-                  }}
-                >
-                  {fmtTokens(entry.totalTokens)}
-                </span>
-
-                {/* BLOCKY BAR */}
-                <div
-                  className="bar-track"
-                  style={{
-                    flex: 1,
-                    background: barTrackColor(entry.rank),
-                  }}
-                >
-                  <div
-                    className={`bar-block ${isFirst ? 'rank-1-bar' : ''}`}
-                    style={{
-                      width: `${ratio * 100}%`,
-                      background: isFirst
-                        ? `repeating-linear-gradient(
-                            90deg,
-                            #ff2d95 0px,
-                            #ff2d95 4px,
-                            #cc1a75 4px,
-                            #cc1a75 6px
-                          )`
-                        : entry.rank <= 3
-                          ? `repeating-linear-gradient(
-                              90deg,
-                              #00f0ff 0px,
-                              #00f0ff 4px,
-                              #00b8c4 4px,
-                              #00b8c4 6px
-                            )`
-                          : `repeating-linear-gradient(
-                              90deg,
-                              #2a2a4a 0px,
-                              #2a2a4a 4px,
-                              #1e1e3a 4px,
-                              #1e1e3a 6px
-                            )`,
-                      boxShadow: isFirst
-                        ? '0 0 8px #ff2d9560, 0 0 16px #ff2d9530'
-                        : entry.rank <= 3
-                          ? '0 0 6px rgba(0, 240, 255, 0.2)'
-                          : 'none',
+                  {/* ONLINE DOT */}
+                  <motion.span
+                    className={`online-dot ${entry.isOnline ? 'online-dot-active' : 'online-dot-inactive'}`}
+                    animate={{
+                      scale: entry.isOnline ? [1, 1.3, 1] : 1,
+                    }}
+                    transition={{
+                      scale: { duration: 0.3 },
                     }}
                   />
-                </div>
 
-                {/* TODAY DELTA */}
-                <span
-                  style={{
-                    flex: '0 0 auto',
-                    textAlign: 'right',
-                    color: '#5e5e7e',
-                    fontSize: 'clamp(10px, 1.2vw, 14px)',
-                    fontVariantNumeric: 'tabular-nums',
-                  }}
-                >
-                  +{fmtTokensShort(entry.tokensToday)} TODAY
-                </span>
-              </div>
-            )
-          })
-        )}
+                  {/* BAR COLUMN: name above, bar below */}
+                  <div style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: '4px' }}>
+                    {/* NAME + TOKEN ROW */}
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline' }}>
+                      <span
+                        style={{
+                          color: rankColor(entry.rank, entry.color),
+                          fontSize: 'clamp(16px, 2.2vw, 28px)',
+                          fontWeight: 700,
+                          lineHeight: 1,
+                          ...(entry.color ? { '--uc': entry.color } as React.CSSProperties : {}),
+                          ...(isFirst
+                            ? { animation: 'namePulse 3s ease-in-out infinite' }
+                            : entry.color || entry.rank <= 3
+                              ? { textShadow: glowShadow(entry.rank, entry.color) }
+                              : {}),
+                        }}
+                      >
+                        {isFirst ? '\u2666 ' : ''}
+                        {entry.name.toUpperCase()}
+                      </span>
+                      <span
+                        style={{
+                          color: tokenColor(entry.rank, entry.color),
+                          fontSize: 'clamp(13px, 1.6vw, 20px)',
+                          fontVariantNumeric: 'tabular-nums',
+                          lineHeight: 1,
+                          ...(isFirst || entry.color
+                            ? { textShadow: `0 0 8px ${tokenColor(entry.rank, entry.color)}60` }
+                            : {}),
+                        }}
+                      >
+                        <AnimatedTokens value={entry.totalTokens} formatter={fmtTokens} />
+                      </span>
+                    </div>
+                    {/* BLOCKY BAR */}
+                    <div
+                      className="bar-track"
+                      style={{ background: barTrackColor(entry.rank, entry.color) }}
+                    >
+                      <motion.div
+                        className={`bar-block ${isFirst ? 'rank-1-bar' : ''}`}
+                        animate={{ width: `${ratio * 100}%` }}
+                        transition={{ type: 'spring', stiffness: 60, damping: 15 }}
+                        style={{
+                          background: barGradient(entry.rank, entry.color),
+                          boxShadow: barShadow(entry.rank, entry.color),
+                        }}
+                      />
+                    </div>
+                  </div>
+
+                  {/* TODAY DELTA */}
+                  <span
+                    style={{
+                      flex: '0 0 clamp(100px, 12vw, 160px)',
+                      textAlign: 'right',
+                      color: '#5e5e7e',
+                      fontSize: 'clamp(10px, 1.2vw, 14px)',
+                      fontVariantNumeric: 'tabular-nums',
+                    }}
+                  >
+                    +<AnimatedTokens value={entry.tokensToday} formatter={fmtTokensShort} /> TODAY
+                  </span>
+                </motion.div>
+              )
+            })
+          )}
+        </AnimatePresence>
       </div>
 
       {/* TIMELINE */}
-      <div
+      <motion.div
+        initial={{ opacity: 0, y: 20 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ duration: 0.5, delay: 0.3 }}
         style={{
           height: 'clamp(120px, 20vh, 200px)',
           borderTop: '1px solid #1a1a3a',
@@ -460,10 +495,13 @@ export default function LeaderboardPage(): React.ReactElement {
         }}
       >
         <Timeline />
-      </div>
+      </motion.div>
 
       {/* BOTTOM BAR */}
-      <div
+      <motion.div
+        initial={{ opacity: 0 }}
+        animate={{ opacity: 1 }}
+        transition={{ duration: 0.5, delay: 0.4 }}
         style={{
           padding: '16px 36px',
           display: 'flex',
@@ -478,7 +516,7 @@ export default function LeaderboardPage(): React.ReactElement {
             fontSize: 'clamp(11px, 1.3vw, 15px)',
           }}
         >
-          TOTAL: {fmtTokens(data?.totalTokens ?? 0)} TOKENS
+          TOTAL: <AnimatedTokens value={data?.totalTokens ?? 0} formatter={fmtTokens} /> TOKENS
         </span>
 
         <span
@@ -499,17 +537,19 @@ export default function LeaderboardPage(): React.ReactElement {
           )}
         </span>
 
-        <span
-          style={{
+        <motion.span
+          animate={{
             color: justRefreshed ? '#ff2d95' : '#5e5e7e',
+            textShadow: justRefreshed ? '0 0 10px #ff2d9580' : '0 0 0px transparent',
+          }}
+          transition={{ duration: 0.5 }}
+          style={{
             fontSize: 'clamp(11px, 1.3vw, 15px)',
-            transition: 'color 1s',
-            textShadow: justRefreshed ? '0 0 10px #ff2d9580' : 'none',
           }}
         >
           UPDATED {data ? fmtTime(data.updatedAt) : '--:--:--'}
-        </span>
-      </div>
+        </motion.span>
+      </motion.div>
     </div>
   )
 }
