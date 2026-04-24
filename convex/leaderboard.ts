@@ -214,14 +214,19 @@ export const getTimeline = query({
 export const wipeLegacy = internalMutation({
   args: {},
   handler: async (ctx) => {
-    const oldEntries = await ctx.db.query("entries").collect()
+    const CHUNK = 1000
+    const oldEntries = await ctx.db.query("entries").take(CHUNK)
     for (const row of oldEntries) {
       await ctx.db.delete(row._id)
     }
-    const oldSnapshots = await ctx.db.query("snapshots").collect()
+    const oldSnapshots = await ctx.db.query("snapshots").take(CHUNK)
     for (const row of oldSnapshots) {
       await ctx.db.delete(row._id)
     }
-    return { deletedEntries: oldEntries.length, deletedSnapshots: oldSnapshots.length }
+    return {
+      deletedEntries: oldEntries.length,
+      deletedSnapshots: oldSnapshots.length,
+      done: oldEntries.length < CHUNK && oldSnapshots.length < CHUNK,
+    }
   },
 })
