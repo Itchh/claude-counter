@@ -14,9 +14,25 @@ curl -fsSL https://raw.githubusercontent.com/Itchh/claude-counter/master/reporte
 
 That's it. The installer checks for git and bun (installing bun if missing),
 clones the repo to `~/.local/share/claude-leaderboard-reporter`, and runs
-setup. Setup will prompt for your display name, the leaderboard URL, and the
-shared secret, then register the launchd agent and start reporting
-immediately.
+setup. Setup will use your `git config --global user.email` as your
+leaderboard identity (so your counts merge across devices), then prompt for
+a display name and colour.
+
+Requires `git config --global user.email` to be set to a real email before
+running. Set it with:
+
+```
+git config --global user.email "you@example.com"
+```
+
+## One-line uninstall
+
+```
+curl -fsSL https://raw.githubusercontent.com/Itchh/claude-counter/master/reporter/uninstall.sh | bash
+```
+
+Stops the launchd agent and removes the install dir, config, cache, and
+logs. To reinstall cleanly, just run the install command above again.
 
 ## Day-to-day
 

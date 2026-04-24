@@ -1,4 +1,5 @@
 import { spawn } from 'child_process'
+import { randomUUID } from 'crypto'
 import { chmod, mkdir, writeFile, access, readFile } from 'fs/promises'
 import { existsSync, createReadStream } from 'fs'
 import readline from 'readline'
@@ -10,10 +11,14 @@ import { COLOR_PRESETS } from './colors'
 
 interface Config {
   name: string
+  email: string
+  deviceId: string
   serverUrl: string
   secret: string
   color?: string
 }
+
+const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
 
 interface RepoConfig {
   serverUrl: string
@@ -144,12 +149,14 @@ function ask(
   rl: readline.Interface,
   label: string,
   validate?: (v: string) => string | undefined,
+  defaultVal?: string,
 ): Promise<string> {
   return new Promise((resolve) => {
+    const suffix = defaultVal ? pc.dim(` (${defaultVal})`) : ''
     const prompt = (): void => {
-      process.stdout.write(pc.cyan('◆') + '  ' + pc.bold(label) + '\n' + pc.dim('│') + '  ')
+      process.stdout.write(pc.cyan('◆') + '  ' + pc.bold(label) + suffix + '\n' + pc.dim('│') + '  ')
       rl.question('', (raw) => {
-        const value = raw.trim()
+        const value = raw.trim() || defaultVal || ''
         const error = validate?.(value)
         if (error) {
           process.stdout.write(pc.red('│  ✖ ' + error) + '\n')
@@ -161,6 +168,13 @@ function ask(
     }
     prompt()
   })
+}
+
+async function detectGitEmail(): Promise<string | undefined> {
+  const result = await run('git', ['config', '--global', 'user.email'])
+  if (result.code !== 0) return undefined
+  const candidate = result.stdout.trim()
+  return EMAIL_REGEX.test(candidate) ? candidate : undefined
 }
 
 interface SetupResult {
@@ -178,7 +192,7 @@ async function promptConfig(): Promise<SetupResult> {
   let secret: string
 
   if (repoConfig) {
-    process.stdout.write(pc.dim('┌  Config loaded — just need your name\n'))
+    process.stdout.write(pc.dim('┌  Config loaded — just need your details\n'))
     process.stdout.write(pc.dim(`│  Server: ${repoConfig.serverUrl}\n`))
     process.stdout.write(pc.dim(`│  Secret: ${'*'.repeat(repoConfig.secret.length)}\n`))
     serverUrl = repoConfig.serverUrl
@@ -197,6 +211,24 @@ async function promptConfig(): Promise<SetupResult> {
     })
     secret = await ask(rl, 'Shared secret')
   }
+
+  const gitEmail = await detectGitEmail()
+  if (!gitEmail) {
+    rl.close()
+    process.stdout.write(
+      '\n' + pc.red('✖') + ' No valid email found in git config --global user.email.\n' +
+        pc.dim('│  The leaderboard uses your git email to merge counts across your devices.\n') +
+        pc.dim('│  Set it with:\n') +
+        pc.dim('│    git config --global user.email "you@example.com"\n') +
+        pc.dim('└  Then re-run setup.\n'),
+    )
+    process.exit(1)
+  }
+  process.stdout.write(
+    pc.cyan('◆') + '  ' + pc.bold('Your email') + pc.dim(` (from git config, used to merge devices)\n`) +
+      pc.dim('│') + '  ' + pc.bold(gitEmail) + '\n',
+  )
+  const email = gitEmail
 
   const name = await ask(rl, "What's your display name?", (v) => {
     if (!v) return 'Name is required'
@@ -226,9 +258,30 @@ async function promptConfig(): Promise<SetupResult> {
 
   rl.close()
 
+  const deviceId = await loadExistingDeviceId() ?? randomUUID()
+
   return {
-    config: { name, serverUrl: serverUrl.replace(/\/$/, ''), secret, color },
+    config: {
+      name,
+      email: email.toLowerCase(),
+      deviceId,
+      serverUrl: serverUrl.replace(/\/$/, ''),
+      secret,
+      color,
+    },
     leaderboardUrl: repoConfig?.leaderboardUrl ?? null,
+  }
+}
+
+async function loadExistingDeviceId(): Promise<string | undefined> {
+  try {
+    const raw = await readFile(CONFIG_PATH, 'utf-8')
+    const parsed = JSON.parse(raw) as Partial<Config>
+    return typeof parsed.deviceId === 'string' && parsed.deviceId.length > 0
+      ? parsed.deviceId
+      : undefined
+  } catch {
+    return undefined
   }
 }
 
