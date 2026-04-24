@@ -6,17 +6,29 @@ Runs as a macOS launchd background agent — starts on login, auto-restarts if
 it crashes, and is throttled by macOS to stay out of the way of foreground
 work.
 
-## One-line install (macOS)
+## Install (macOS)
+
+Paste this into a terminal — nothing else needs to be installed first:
 
 ```
 curl -fsSL https://raw.githubusercontent.com/Itchh/claude-counter/master/reporter/install.sh | bash
 ```
 
-That's it. The installer checks for git and bun (installing bun if missing),
-clones the repo to `~/.local/share/claude-leaderboard-reporter`, and runs
-setup. Setup will prompt for your display name, the leaderboard URL, and the
-shared secret, then register the launchd agent and start reporting
-immediately.
+The installer checks for git and bun (installing bun if missing), clones the
+repo to `~/.local/share/claude-leaderboard-reporter`, and runs setup. Setup
+will prompt for your display name, the leaderboard URL, and the shared
+secret, then register the launchd agent and start reporting immediately.
+
+## Uninstall (macOS)
+
+Paste this into a terminal to fully wipe the reporter — agent, cloned repo,
+config, cache, and logs:
+
+```
+curl -fsSL https://raw.githubusercontent.com/Itchh/claude-counter/master/reporter/uninstall.sh | bash
+```
+
+Safe to re-run; it skips anything that's already gone.
 
 ## Day-to-day
 

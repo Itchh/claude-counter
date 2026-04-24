@@ -355,7 +355,7 @@ async function main(): Promise<void> {
   log(pc.dim('│'))
   log(pc.dim(`│  Check:   launchctl print gui/${uid}/${LABEL}`))
   log(pc.dim(`│  Logs:    tail -f ${LOG_PATH}`))
-  log(pc.dim(`│  Remove:  bun uninstall.ts`))
+  log(pc.dim(`│  Remove:  curl -fsSL https://raw.githubusercontent.com/Itchh/claude-counter/master/reporter/uninstall.sh | bash`))
   log(pc.dim('└'))
   log('')
   log(amber('◇') + '  ' + pc.bold(amber("You're on the board!")) + ' The reporter is running in the background.')
