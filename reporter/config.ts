@@ -7,6 +7,8 @@ import { COLOR_PRESETS } from './colors'
 
 interface Config {
   name: string
+  email: string
+  deviceId: string
   serverUrl: string
   secret: string
   color?: string
@@ -80,8 +82,12 @@ async function main(): Promise<void> {
   log(pc.dim('  ─────────────────────────'))
   log('')
   log(pc.dim('  Name:   ') + pc.bold(config.name))
+  log(pc.dim('  Email:  ') + pc.bold(config.email ?? 'missing — run setup.ts'))
   log(pc.dim('  Colour: ') + (config.color ? pc.bold(config.color) : pc.dim('not set')))
   log(pc.dim('  Server: ') + pc.dim(config.serverUrl))
+  log('')
+  log(pc.dim('  Note: name and colour are locked server-side to what the first device set.'))
+  log(pc.dim('  Changing them locally only affects this device\'s future log lines.'))
   log('')
 
   const rl = openRl()

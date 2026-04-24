@@ -1,29 +1,31 @@
 import { query, internalMutation } from "./_generated/server"
 import { v } from "convex/values"
 
+const SNAPSHOT_INTERVAL_MS = 5 * 60_000
+
 export const get = query({
   args: {},
   handler: async (ctx) => {
-    const entries = await ctx.db.query("entries").collect()
+    const users = await ctx.db.query("users").collect()
     const metaRow = await ctx.db
       .query("meta")
       .withIndex("by_key", (q) => q.eq("key", "updatedAt"))
       .unique()
 
-    const sorted = entries
+    const sorted = users
       .sort((a, b) => b.totalTokens - a.totalTokens)
-      .map((entry, i) => ({
-        name: entry.name,
-        totalTokens: entry.totalTokens,
-        inputTokens: entry.inputTokens,
-        outputTokens: entry.outputTokens,
-        cacheTokens: entry.cacheTokens,
-        tokensToday: entry.tokensToday,
-        sessionCount: entry.sessionCount,
-        lastSeen: entry.lastSeen,
+      .map((user, i) => ({
+        name: user.name,
+        totalTokens: user.totalTokens,
+        inputTokens: user.inputTokens,
+        outputTokens: user.outputTokens,
+        cacheTokens: user.cacheTokens,
+        tokensToday: user.tokensToday,
+        sessionCount: user.sessionCount,
+        lastSeen: user.lastSeen,
         rank: i + 1,
-        isOnline: Date.now() - new Date(entry.lastSeen).getTime() < 90_000,
-        color: entry.color ?? null,
+        isOnline: Date.now() - new Date(user.lastSeen).getTime() < 90_000,
+        color: user.color ?? null,
       }))
 
     const totalTokens = sorted.reduce((s, e) => s + e.totalTokens, 0)
@@ -36,12 +38,12 @@ export const get = query({
   },
 })
 
-const SNAPSHOT_INTERVAL_MS = 5 * 60_000
-
-export const upsertEntry = internalMutation({
+export const upsertDevice = internalMutation({
   args: {
-    key: v.string(),
+    userKey: v.string(),
+    deviceId: v.string(),
     name: v.string(),
+    color: v.optional(v.string()),
     totalTokens: v.number(),
     inputTokens: v.number(),
     outputTokens: v.number(),
@@ -49,48 +51,94 @@ export const upsertEntry = internalMutation({
     tokensToday: v.number(),
     sessionCount: v.number(),
     lastSeen: v.string(),
-    color: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
-    const existing = await ctx.db
-      .query("entries")
-      .withIndex("by_key", (q) => q.eq("key", args.key))
+    const existingDevice = await ctx.db
+      .query("devices")
+      .withIndex("by_userKey_deviceId", (q) =>
+        q.eq("userKey", args.userKey).eq("deviceId", args.deviceId),
+      )
       .unique()
 
-    if (existing) {
-      await ctx.db.patch(existing._id, {
-        name: args.name,
-        totalTokens: args.totalTokens,
-        inputTokens: args.inputTokens,
-        outputTokens: args.outputTokens,
-        cacheTokens: args.cacheTokens,
-        tokensToday: args.tokensToday,
-        sessionCount: args.sessionCount,
-        lastSeen: args.lastSeen,
-        ...(args.color !== undefined ? { color: args.color } : {}),
-      })
+    const deviceFields = {
+      userKey: args.userKey,
+      deviceId: args.deviceId,
+      totalTokens: args.totalTokens,
+      inputTokens: args.inputTokens,
+      outputTokens: args.outputTokens,
+      cacheTokens: args.cacheTokens,
+      tokensToday: args.tokensToday,
+      sessionCount: args.sessionCount,
+      lastSeen: args.lastSeen,
+    }
+
+    if (existingDevice) {
+      await ctx.db.patch(existingDevice._id, deviceFields)
     } else {
-      await ctx.db.insert("entries", {
-        ...args,
-        color: args.color ?? undefined,
+      await ctx.db.insert("devices", deviceFields)
+    }
+
+    const allDevices = await ctx.db
+      .query("devices")
+      .withIndex("by_userKey", (q) => q.eq("userKey", args.userKey))
+      .collect()
+
+    const aggregate = allDevices.reduce(
+      (acc, d) => ({
+        totalTokens: acc.totalTokens + d.totalTokens,
+        inputTokens: acc.inputTokens + d.inputTokens,
+        outputTokens: acc.outputTokens + d.outputTokens,
+        cacheTokens: acc.cacheTokens + d.cacheTokens,
+        tokensToday: acc.tokensToday + d.tokensToday,
+        sessionCount: acc.sessionCount + d.sessionCount,
+        lastSeen:
+          new Date(d.lastSeen).getTime() > new Date(acc.lastSeen).getTime()
+            ? d.lastSeen
+            : acc.lastSeen,
+      }),
+      {
+        totalTokens: 0,
+        inputTokens: 0,
+        outputTokens: 0,
+        cacheTokens: 0,
+        tokensToday: 0,
+        sessionCount: 0,
+        lastSeen: new Date(0).toISOString(),
+      },
+    )
+
+    const existingUser = await ctx.db
+      .query("users")
+      .withIndex("by_key", (q) => q.eq("key", args.userKey))
+      .unique()
+
+    if (existingUser) {
+      await ctx.db.patch(existingUser._id, aggregate)
+    } else {
+      await ctx.db.insert("users", {
+        key: args.userKey,
+        name: args.name,
+        ...(args.color !== undefined ? { color: args.color } : {}),
+        ...aggregate,
       })
     }
 
-    // Record a snapshot at most every 5 minutes per user
     const now = Date.now()
     const latestSnapshot = await ctx.db
       .query("snapshots")
-      .withIndex("by_key_timestamp", (q) => q.eq("key", args.key))
+      .withIndex("by_key_timestamp", (q) => q.eq("key", args.userKey))
       .order("desc")
       .first()
 
     if (!latestSnapshot || now - latestSnapshot.timestamp >= SNAPSHOT_INTERVAL_MS) {
+      const userNameForSnapshot = existingUser?.name ?? args.name
+      const userColorForSnapshot = existingUser?.color ?? args.color
       await ctx.db.insert("snapshots", {
-        key: args.key,
-        name: args.name,
-        totalTokens: args.totalTokens,
+        key: args.userKey,
+        name: userNameForSnapshot,
+        totalTokens: aggregate.totalTokens,
         timestamp: now,
-        color: args.color ?? undefined,
+        ...(userColorForSnapshot !== undefined ? { color: userColorForSnapshot } : {}),
       })
     }
 
@@ -126,11 +174,13 @@ export const getTimeline = query({
       .withIndex("by_timestamp", (q) => q.gte("timestamp", since))
       .take(MAX_SNAPSHOT_FETCH)
 
-    // Group by user key
-    const byUser = new Map<string, { key: string; name: string; color: string | null; points: Array<{ t: number; v: number }> }>()
+    const byUser = new Map<
+      string,
+      { key: string; name: string; color: string | null; points: Array<{ t: number; v: number }> }
+    >()
 
     for (const snap of snapshots) {
-      const userKey = snap.name.toLowerCase()
+      const userKey = snap.key
       let user = byUser.get(userKey)
       if (!user) {
         user = { key: userKey, name: snap.name, color: snap.color ?? null, points: [] }
@@ -140,7 +190,6 @@ export const getTimeline = query({
       if (snap.color) user.color = snap.color
     }
 
-    // Sort and downsample each user's points
     for (const user of byUser.values()) {
       user.points.sort((a, b) => a.t - b.t)
 
@@ -159,5 +208,20 @@ export const getTimeline = query({
     }
 
     return { since, now, users: Array.from(byUser.values()) }
+  },
+})
+
+export const wipeLegacy = internalMutation({
+  args: {},
+  handler: async (ctx) => {
+    const oldEntries = await ctx.db.query("entries").collect()
+    for (const row of oldEntries) {
+      await ctx.db.delete(row._id)
+    }
+    const oldSnapshots = await ctx.db.query("snapshots").collect()
+    for (const row of oldSnapshots) {
+      await ctx.db.delete(row._id)
+    }
+    return { deletedEntries: oldEntries.length, deletedSnapshots: oldSnapshots.length }
   },
 })
