@@ -1,5 +1,6 @@
 import { query, internalMutation } from "./_generated/server"
 import { v } from "convex/values"
+import { internal } from "./_generated/api"
 
 export const get = query({
   args: {},
@@ -90,7 +91,6 @@ export const upsertEntry = internalMutation({
         name: args.name,
         totalTokens: args.totalTokens,
         timestamp: now,
-        color: args.color ?? undefined,
       })
     }
 
@@ -126,18 +126,29 @@ export const getTimeline = query({
       .withIndex("by_timestamp", (q) => q.gte("timestamp", since))
       .take(MAX_SNAPSHOT_FETCH)
 
+    const entries = await ctx.db.query("entries").collect()
+    const entryMeta = new Map<string, { name: string; color: string | null }>()
+    for (const entry of entries) {
+      entryMeta.set(entry.key, { name: entry.name, color: entry.color ?? null })
+    }
+
     // Group by user key
     const byUser = new Map<string, { key: string; name: string; color: string | null; points: Array<{ t: number; v: number }> }>()
 
     for (const snap of snapshots) {
-      const userKey = snap.name.toLowerCase()
+      const userKey = snap.key
       let user = byUser.get(userKey)
       if (!user) {
-        user = { key: userKey, name: snap.name, color: snap.color ?? null, points: [] }
+        const meta = entryMeta.get(userKey)
+        user = {
+          key: userKey,
+          name: meta?.name ?? snap.name,
+          color: meta?.color ?? null,
+          points: [],
+        }
         byUser.set(userKey, user)
       }
       user.points.push({ t: snap.timestamp, v: snap.totalTokens })
-      if (snap.color) user.color = snap.color
     }
 
     // Sort and downsample each user's points
@@ -159,5 +170,30 @@ export const getTimeline = query({
     }
 
     return { since, now, users: Array.from(byUser.values()) }
+  },
+})
+
+const SNAPSHOT_RETENTION_DAYS = 30
+const GC_BATCH_SIZE = 200
+
+export const pruneOldSnapshots = internalMutation({
+  args: {},
+  handler: async (ctx) => {
+    const cutoff = Date.now() - SNAPSHOT_RETENTION_DAYS * 24 * 60 * 60 * 1000
+
+    const stale = await ctx.db
+      .query("snapshots")
+      .withIndex("by_timestamp", (q) => q.lt("timestamp", cutoff))
+      .take(GC_BATCH_SIZE)
+
+    for (const snap of stale) {
+      await ctx.db.delete(snap._id)
+    }
+
+    if (stale.length === GC_BATCH_SIZE) {
+      await ctx.scheduler.runAfter(0, internal.leaderboard.pruneOldSnapshots, {})
+    }
+
+    return { deleted: stale.length }
   },
 })

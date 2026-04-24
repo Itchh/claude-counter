@@ -71,7 +71,7 @@ const ERROR_FLAG_PATH = path.join(HOME, '.leaderboard-reporter.error')
 const REPORTER_DIR = path.dirname(fileURLToPath(import.meta.url))
 
 const CACHE_VERSION = 2
-const REPORT_INTERVAL_MS = 30_000
+const REPORT_INTERVAL_MS = 5 * 60_000
 const CHOKIDAR_DEBOUNCE_MS = 2_000
 const CACHE_PERSIST_INTERVAL_MS = 5 * 60_000
 const MEMORY_CHECK_INTERVAL_MS = 60_000
