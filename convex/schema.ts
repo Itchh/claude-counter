@@ -2,6 +2,32 @@ import { defineSchema, defineTable } from "convex/server"
 import { v } from "convex/values"
 
 export default defineSchema({
+  users: defineTable({
+    key: v.string(),
+    name: v.string(),
+    color: v.optional(v.string()),
+    totalTokens: v.number(),
+    inputTokens: v.number(),
+    outputTokens: v.number(),
+    cacheTokens: v.number(),
+    tokensToday: v.number(),
+    sessionCount: v.number(),
+    lastSeen: v.string(),
+  }).index("by_key", ["key"]),
+
+  devices: defineTable({
+    userKey: v.string(),
+    deviceId: v.string(),
+    totalTokens: v.number(),
+    inputTokens: v.number(),
+    outputTokens: v.number(),
+    cacheTokens: v.number(),
+    tokensToday: v.number(),
+    sessionCount: v.number(),
+    lastSeen: v.string(),
+  }).index("by_userKey_deviceId", ["userKey", "deviceId"])
+    .index("by_userKey", ["userKey"]),
+
   entries: defineTable({
     key: v.string(),
     name: v.string(),

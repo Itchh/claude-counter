@@ -18,17 +18,45 @@ http.route({
       })
     }
 
-    const name = body.name?.trim()
+    const name = typeof body.name === "string" ? body.name.trim() : ""
+    const email = typeof body.email === "string" ? body.email.trim() : ""
+    const deviceId = typeof body.deviceId === "string" ? body.deviceId.trim() : ""
+
     if (!name) {
-      return new Response(JSON.stringify({ error: "Name required" }), {
-        status: 400,
-        headers: { "Content-Type": "application/json" },
-      })
+      return new Response(
+        JSON.stringify({ error: "Display name is required in the report body" }),
+        { status: 400, headers: { "Content-Type": "application/json" } },
+      )
+    }
+    if (!email) {
+      return new Response(
+        JSON.stringify({
+          error:
+            "Email is required in the report body. Re-run `bun setup.ts` to upgrade your reporter.",
+        }),
+        { status: 400, headers: { "Content-Type": "application/json" } },
+      )
+    }
+    if (!deviceId) {
+      return new Response(
+        JSON.stringify({
+          error:
+            "Device ID is required in the report body. Re-run `bun setup.ts` to upgrade your reporter.",
+        }),
+        { status: 400, headers: { "Content-Type": "application/json" } },
+      )
     }
 
-    await ctx.runMutation(internal.leaderboard.upsertEntry, {
-      key: name.toLowerCase(),
+    const color =
+      typeof body.color === "string" && /^#[0-9a-fA-F]{6}$/.test(body.color)
+        ? body.color
+        : undefined
+
+    await ctx.runMutation(internal.leaderboard.upsertDevice, {
+      userKey: email.toLowerCase(),
+      deviceId,
       name,
+      ...(color !== undefined ? { color } : {}),
       totalTokens: body.totalTokens ?? 0,
       inputTokens: body.inputTokens ?? 0,
       outputTokens: body.outputTokens ?? 0,
@@ -36,7 +64,6 @@ http.route({
       tokensToday: body.tokensToday ?? 0,
       sessionCount: body.sessionCount ?? 0,
       lastSeen: new Date().toISOString(),
-      ...(typeof body.color === 'string' && /^#[0-9a-fA-F]{6}$/.test(body.color) ? { color: body.color } : {}),
     })
 
     return new Response(JSON.stringify({ ok: true }), {

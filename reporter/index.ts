@@ -1,13 +1,18 @@
 import { spawn } from 'child_process'
+import { randomUUID } from 'crypto'
 import { createReadStream } from 'fs'
-import { readFile, readdir, stat, writeFile, rename, access } from 'fs/promises'
+import { chmod, readFile, readdir, stat, writeFile, rename, access } from 'fs/promises'
 import path from 'path'
 import readline from 'readline'
 import { fileURLToPath } from 'url'
 import chokidar from 'chokidar'
 
+const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
+
 interface Config {
   name: string
+  email: string
+  deviceId: string
   serverUrl: string
   secret: string
   color?: string
@@ -347,6 +352,8 @@ async function postToServer(config: Config, aggregate: Aggregate): Promise<void>
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         name: config.name,
+        email: config.email,
+        deviceId: config.deviceId,
         secret: config.secret,
         ...aggregate,
         ...(config.color ? { color: config.color } : {}),
@@ -429,17 +436,83 @@ async function checkForUpdates(): Promise<void> {
   }
 }
 
+async function detectGitEmail(): Promise<string | undefined> {
+  const result = await run('git', ['config', '--global', 'user.email'])
+  if (result.code !== 0) return undefined
+  const candidate = result.stdout.trim()
+  return EMAIL_REGEX.test(candidate) ? candidate : undefined
+}
+
 async function loadConfig(): Promise<Config> {
+  let raw: string
   try {
-    const raw = await readFile(CONFIG_PATH, 'utf-8')
-    return JSON.parse(raw) as Config
+    raw = await readFile(CONFIG_PATH, 'utf-8')
   } catch (err) {
     console.error(
-      `No config at ${CONFIG_PATH}. Run \"bun setup.ts\" before starting the reporter.`,
-      err instanceof Error ? err.message : err
+      `No config at ${CONFIG_PATH}. Run "bun setup.ts" before starting the reporter.`,
+      err instanceof Error ? err.message : err,
     )
     process.exit(78) // EX_CONFIG
   }
+
+  let parsed: Partial<Config>
+  try {
+    parsed = JSON.parse(raw) as Partial<Config>
+  } catch (err) {
+    console.error(
+      `Config at ${CONFIG_PATH} is not valid JSON:`,
+      err instanceof Error ? err.message : err,
+    )
+    process.exit(78)
+  }
+
+  const fatal: string[] = []
+  if (!parsed.name) fatal.push('name')
+  if (!parsed.serverUrl) fatal.push('serverUrl')
+  if (!parsed.secret) fatal.push('secret')
+  if (fatal.length > 0) {
+    console.error(
+      `Config at ${CONFIG_PATH} is missing required fields: ${fatal.join(', ')}. ` +
+        `Run "bun setup.ts" to re-create it.`,
+    )
+    process.exit(78)
+  }
+
+  let dirty = false
+
+  if (!parsed.deviceId) {
+    parsed.deviceId = randomUUID()
+    console.log(`Config missing deviceId; generated ${parsed.deviceId}`)
+    dirty = true
+  }
+
+  if (!parsed.email) {
+    const gitEmail = await detectGitEmail()
+    if (!gitEmail) {
+      console.error(
+        `Config at ${CONFIG_PATH} is missing 'email' and git config --global user.email is not set to a valid email. ` +
+          `Run "bun setup.ts" to re-create the config with an email address (required to merge your devices on the leaderboard).`,
+      )
+      process.exit(78)
+    }
+    parsed.email = gitEmail.toLowerCase()
+    console.log(`Config missing email; auto-filled from git config: ${parsed.email}`)
+    dirty = true
+  }
+
+  if (dirty) {
+    try {
+      await writeFile(CONFIG_PATH, JSON.stringify(parsed, null, 2), 'utf-8')
+      await chmod(CONFIG_PATH, 0o600)
+    } catch (err) {
+      console.warn(
+        `Failed to persist migrated config to ${CONFIG_PATH}:`,
+        err instanceof Error ? err.message : err,
+      )
+    }
+  }
+
+  return parsed as Config
 }
 
 async function main(): Promise<void> {
