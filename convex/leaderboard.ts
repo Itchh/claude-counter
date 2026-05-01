@@ -1,5 +1,6 @@
 import { query, internalMutation } from "./_generated/server"
 import { v } from "convex/values"
+import { internal } from "./_generated/api"
 
 const SNAPSHOT_INTERVAL_MS = 5 * 60_000
 
@@ -228,5 +229,30 @@ export const wipeLegacy = internalMutation({
       deletedSnapshots: oldSnapshots.length,
       done: oldEntries.length < CHUNK && oldSnapshots.length < CHUNK,
     }
+  },
+})
+
+const SNAPSHOT_RETENTION_DAYS = 30
+const GC_BATCH_SIZE = 200
+
+export const pruneOldSnapshots = internalMutation({
+  args: {},
+  handler: async (ctx) => {
+    const cutoff = Date.now() - SNAPSHOT_RETENTION_DAYS * 24 * 60 * 60 * 1000
+
+    const stale = await ctx.db
+      .query("snapshots")
+      .withIndex("by_timestamp", (q) => q.lt("timestamp", cutoff))
+      .take(GC_BATCH_SIZE)
+
+    for (const snap of stale) {
+      await ctx.db.delete(snap._id)
+    }
+
+    if (stale.length === GC_BATCH_SIZE) {
+      await ctx.scheduler.runAfter(0, internal.leaderboard.pruneOldSnapshots, {})
+    }
+
+    return { deleted: stale.length }
   },
 })
