@@ -46,6 +46,19 @@ export default defineSchema({
     value: v.string(),
   }).index("by_key", ["key"]),
 
+  events: defineTable({
+    type: v.union(
+      v.literal("milestone"),
+      v.literal("new_leader"),
+      v.literal("user_joined"),
+    ),
+    userKey: v.string(),
+    name: v.string(),
+    color: v.optional(v.string()),
+    value: v.optional(v.number()),
+    timestamp: v.number(),
+  }).index("by_timestamp", ["timestamp"]),
+
   snapshots: defineTable({
     key: v.string(),
     name: v.string(),

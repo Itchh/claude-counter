@@ -1,5 +1,6 @@
 import type { Metadata } from 'next'
 import { ConvexClientProvider } from './ConvexClientProvider'
+import './globals.css'
 
 export const metadata: Metadata = {
   title: 'Season One — Claude Leaderboard',

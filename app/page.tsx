@@ -6,10 +6,15 @@ import { api } from '../convex/_generated/api'
 import { motion, AnimatePresence, useSpring, useTransform } from 'motion/react'
 import type { LeaderboardEntry } from '@/types'
 import { fmtTokens, fmtTokensShort, fmtTime } from '@/lib/formatters'
+import { useBurnRates } from '@/lib/useBurnRates'
 import { Timeline } from './Timeline'
+import { Ticker } from './Ticker'
+import { Toasts } from './Toasts'
 
 const FLASH_DURATION = 800
 const REFRESH_FLASH_DURATION = 1000
+const FANFARE_DURATION = 1600
+const HOT_TOKENS_PER_MIN = 30_000
 
 function useClockTime(): string {
   const [time, setTime] = useState('')
@@ -225,15 +230,29 @@ const STYLES = `
 
 export default function LeaderboardPage(): React.ReactElement {
   const data = useQuery(api.leaderboard.get)
+  const events = useQuery(api.leaderboard.getEvents)
   const [justRefreshed, setJustRefreshed] = useState(false)
   const [flashMap, setFlashMap] = useState<Record<string, 'up' | 'down'>>({})
   const [loaded, setLoaded] = useState(false)
+  const [fanfareColor, setFanfareColor] = useState<string | null>(null)
   const prevRanks = useRef<Map<string, number>>(new Map())
   const prevUpdatedAt = useRef<string>('')
+  const prevLeaderKey = useRef<string | null>(null)
   const clock = useClockTime()
+  const burnRates = useBurnRates(data?.leaderboard, data?.updatedAt)
 
   useEffect(() => {
     if (!data) return
+
+    const leader = data.leaderboard[0]
+    if (leader) {
+      const leaderKey = leader.name.toLowerCase()
+      if (prevLeaderKey.current && prevLeaderKey.current !== leaderKey) {
+        setFanfareColor(leader.color ?? '#ff2d95')
+        setTimeout(() => setFanfareColor(null), FANFARE_DURATION)
+      }
+      prevLeaderKey.current = leaderKey
+    }
 
     if (prevUpdatedAt.current && data.updatedAt !== prevUpdatedAt.current) {
       setJustRefreshed(true)
@@ -269,6 +288,7 @@ export default function LeaderboardPage(): React.ReactElement {
 
   return (
     <div
+      className={fanfareColor ? 'animate-screen-shake' : 'animate-[screenFlicker_4s_infinite]'}
       style={{
         fontFamily:
           "ui-monospace, 'Cascadia Code', 'Courier New', Courier, monospace",
@@ -277,14 +297,29 @@ export default function LeaderboardPage(): React.ReactElement {
         height: '100vh',
         width: '100vw',
         display: 'grid',
-        gridTemplateRows: 'auto 1fr auto auto',
+        gridTemplateRows: 'auto 1fr auto auto auto',
         overflow: 'hidden',
-        animation: 'screenFlicker 4s infinite',
       }}
     >
       <style>{STYLES}</style>
       <div className="crt-overlay" />
       <div className="scanline-bar" />
+      <Toasts events={events} />
+
+      {/* NEW #1 FANFARE BURST */}
+      <AnimatePresence>
+        {fanfareColor && (
+          <motion.div
+            key="fanfare-burst"
+            initial={{ opacity: 0.9, scale: 0 }}
+            animate={{ opacity: 0, scale: 3 }}
+            exit={{ opacity: 0 }}
+            transition={{ duration: FANFARE_DURATION / 1000, ease: 'easeOut' }}
+            className="fixed inset-0 z-[99] pointer-events-none origin-center [background:var(--fanfare-bg)]"
+            style={{ '--fanfare-bg': `radial-gradient(circle at center, ${fanfareColor}66 0%, ${fanfareColor}22 30%, transparent 60%)` } as React.CSSProperties}
+          />
+        )}
+      </AnimatePresence>
 
       {/* TOP BAR */}
       <motion.div
@@ -355,6 +390,8 @@ export default function LeaderboardPage(): React.ReactElement {
               const flash = flashMap[key]
               const ratio = entry.totalTokens / maxTokens
               const isFirst = entry.rank === 1
+              const burnRate = entry.isOnline ? (burnRates.get(key) ?? 0) : 0
+              const isHot = burnRate >= HOT_TOKENS_PER_MIN
 
               return (
                 <motion.div
@@ -432,6 +469,11 @@ export default function LeaderboardPage(): React.ReactElement {
                       >
                         {isFirst ? '\u2666 ' : ''}
                         {entry.name.toUpperCase()}
+                        {isHot && (
+                          <span className="text-[#ff5e2d] [text-shadow:0_0_8px_#ff5e2d,0_0_20px_#ff5e2d60] animate-hot-flicker text-[0.5em] tracking-[0.2em] align-middle ml-3">
+                            [HOT]
+                          </span>
+                        )}
                       </span>
                       <span
                         style={{
@@ -464,17 +506,31 @@ export default function LeaderboardPage(): React.ReactElement {
                     </div>
                   </div>
 
-                  {/* TODAY DELTA */}
+                  {/* TODAY DELTA + BURN RATE */}
                   <span
                     style={{
                       flex: '0 0 clamp(100px, 12vw, 160px)',
-                      textAlign: 'right',
+                      display: 'flex',
+                      flexDirection: 'column',
+                      alignItems: 'flex-end',
+                      gap: '2px',
                       color: '#5e5e7e',
                       fontSize: 'clamp(10px, 1.2vw, 14px)',
                       fontVariantNumeric: 'tabular-nums',
                     }}
                   >
-                    +<AnimatedTokens value={entry.tokensToday} formatter={fmtTokensShort} /> TODAY
+                    <span>
+                      +<AnimatedTokens value={entry.tokensToday} formatter={fmtTokensShort} /> TODAY
+                    </span>
+                    {burnRate > 0 && (
+                      <span
+                        className={isHot
+                          ? 'text-[#ff5e2d] [text-shadow:0_0_8px_#ff5e2d60]'
+                          : 'text-[#00ff88] [text-shadow:0_0_6px_#00ff8840]'}
+                      >
+                        ▲ {fmtTokensShort(Math.round(burnRate))}/MIN
+                      </span>
+                    )}
                   </span>
                 </motion.div>
               )
@@ -496,6 +552,9 @@ export default function LeaderboardPage(): React.ReactElement {
       >
         <Timeline />
       </motion.div>
+
+      {/* EVENT TICKER */}
+      <Ticker events={events} />
 
       {/* BOTTOM BAR */}
       <motion.div

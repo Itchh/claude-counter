@@ -1,8 +1,21 @@
-import { query, internalMutation } from "./_generated/server"
+import { query, internalMutation, mutation } from "./_generated/server"
 import { v } from "convex/values"
 import { internal } from "./_generated/api"
 
-const SNAPSHOT_INTERVAL_MS = 5 * 60_000
+const SNAPSHOT_INTERVAL_MS = 60 * 60_000
+
+const TOKEN_MILESTONES: ReadonlyArray<number> = [
+  1_000_000, 5_000_000, 10_000_000, 25_000_000, 50_000_000,
+  100_000_000, 250_000_000, 500_000_000, 1_000_000_000,
+]
+
+function highestMilestoneCrossed(prevTotal: number, nextTotal: number): number | null {
+  let crossed: number | null = null
+  for (const milestone of TOKEN_MILESTONES) {
+    if (prevTotal < milestone && nextTotal >= milestone) crossed = milestone
+  }
+  return crossed
+}
 
 export const get = query({
   args: {},
@@ -25,7 +38,9 @@ export const get = query({
         sessionCount: user.sessionCount,
         lastSeen: user.lastSeen,
         rank: i + 1,
-        isOnline: Date.now() - new Date(user.lastSeen).getTime() < 90_000,
+        // Reporters POST hourly, so "online" means seen within the last
+        // reporting window (75 min) rather than seconds.
+        isOnline: Date.now() - new Date(user.lastSeen).getTime() < 75 * 60_000,
         color: user.color ?? null,
       }))
 
@@ -113,6 +128,11 @@ export const upsertDevice = internalMutation({
       .withIndex("by_key", (q) => q.eq("key", args.userKey))
       .unique()
 
+    const now = Date.now()
+    const prevTotal = existingUser?.totalTokens ?? 0
+    const eventName = existingUser?.name ?? args.name
+    const eventColor = existingUser?.color ?? args.color
+
     if (existingUser) {
       await ctx.db.patch(existingUser._id, aggregate)
     } else {
@@ -122,9 +142,54 @@ export const upsertDevice = internalMutation({
         ...(args.color !== undefined ? { color: args.color } : {}),
         ...aggregate,
       })
+      await ctx.db.insert("events", {
+        type: "user_joined",
+        userKey: args.userKey,
+        name: eventName,
+        ...(eventColor !== undefined ? { color: eventColor } : {}),
+        timestamp: now,
+      })
     }
 
-    const now = Date.now()
+    const milestone = highestMilestoneCrossed(prevTotal, aggregate.totalTokens)
+    if (milestone !== null) {
+      await ctx.db.insert("events", {
+        type: "milestone",
+        userKey: args.userKey,
+        name: eventName,
+        ...(eventColor !== undefined ? { color: eventColor } : {}),
+        value: milestone,
+        timestamp: now,
+      })
+    }
+
+    // Leader change detection: compare current top user against the last
+    // recorded leader in the meta table.
+    const allUsers = await ctx.db.query("users").collect()
+    const leader = allUsers.reduce(
+      (top, u) => (u.totalTokens > (top?.totalTokens ?? -1) ? u : top),
+      null as (typeof allUsers)[number] | null,
+    )
+    if (leader) {
+      const leaderMeta = await ctx.db
+        .query("meta")
+        .withIndex("by_key", (q) => q.eq("key", "leaderKey"))
+        .unique()
+
+      if (!leaderMeta) {
+        // First ever leader — record silently, no fanfare.
+        await ctx.db.insert("meta", { key: "leaderKey", value: leader.key })
+      } else if (leaderMeta.value !== leader.key) {
+        await ctx.db.patch(leaderMeta._id, { value: leader.key })
+        await ctx.db.insert("events", {
+          type: "new_leader",
+          userKey: leader.key,
+          name: leader.name,
+          ...(leader.color !== undefined ? { color: leader.color } : {}),
+          timestamp: now,
+        })
+      }
+    }
     const latestSnapshot = await ctx.db
       .query("snapshots")
       .withIndex("by_key_timestamp", (q) => q.eq("key", args.userKey))
@@ -212,6 +277,52 @@ export const getTimeline = query({
   },
 })
 
+const MAX_EVENTS = 30
+
+export const getEvents = query({
+  args: {},
+  handler: async (ctx) => {
+    const events = await ctx.db
+      .query("events")
+      .withIndex("by_timestamp")
+      .order("desc")
+      .take(MAX_EVENTS)
+
+    return events.map((event) => ({
+      id: event._id,
+      type: event.type,
+      name: event.name,
+      color: event.color ?? null,
+      value: event.value ?? null,
+      timestamp: event.timestamp,
+    }))
+  },
+})
+
+const EVENT_RETENTION_DAYS = 7
+
+export const pruneOldEvents = internalMutation({
+  args: {},
+  handler: async (ctx) => {
+    const cutoff = Date.now() - EVENT_RETENTION_DAYS * 24 * 60 * 60 * 1000
+
+    const stale = await ctx.db
+      .query("events")
+      .withIndex("by_timestamp", (q) => q.lt("timestamp", cutoff))
+      .take(GC_BATCH_SIZE)
+
+    for (const event of stale) {
+      await ctx.db.delete(event._id)
+    }
+
+    if (stale.length === GC_BATCH_SIZE) {
+      await ctx.scheduler.runAfter(0, internal.leaderboard.pruneOldEvents, {})
+    }
+
+    return { deleted: stale.length }
+  },
+})
+
 export const wipeLegacy = internalMutation({
   args: {},
   handler: async (ctx) => {
@@ -232,7 +343,40 @@ export const wipeLegacy = internalMutation({
   },
 })
 
-const SNAPSHOT_RETENTION_DAYS = 30
+const SNAPSHOT_RETENTION_DAYS = 7
+const TRIM_TARGET = 5000
+const TRIM_BATCH_SIZE = 500
+
+// TEMPORARY — delete after running until { done: true }
+export const trimSnapshots = mutation({
+  args: {},
+  handler: async (ctx): Promise<{ deleted: number; done: boolean }> => {
+    // Delete oldest rows directly until only TRIM_TARGET remain. This avoids a
+    // timestamp-cutoff comparison, which fails when many rows share the exact
+    // same timestamp (a `< cutoff` filter excludes all the ties and deletes 0).
+    const newest = await ctx.db
+      .query("snapshots")
+      .withIndex("by_timestamp")
+      .order("desc")
+      .take(TRIM_TARGET + 1)
+
+    if (newest.length <= TRIM_TARGET) {
+      return { deleted: 0, done: true }
+    }
+
+    const stale = await ctx.db
+      .query("snapshots")
+      .withIndex("by_timestamp")
+      .order("asc")
+      .take(TRIM_BATCH_SIZE)
+
+    for (const snap of stale) {
+      await ctx.db.delete(snap._id)
+    }
+
+    return { deleted: stale.length, done: stale.length === 0 }
+  },
+})
 const GC_BATCH_SIZE = 200
 
 export const pruneOldSnapshots = internalMutation({

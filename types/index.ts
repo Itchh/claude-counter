@@ -38,6 +38,17 @@ export interface ReportBody {
   color?: string
 }
 
+export type LeaderboardEventType = 'milestone' | 'new_leader' | 'user_joined'
+
+export interface LeaderboardEvent {
+  id: string
+  type: LeaderboardEventType
+  name: string
+  color: string | null
+  value: number | null
+  timestamp: number
+}
+
 export interface TimelineUser {
   key: string
   name: string

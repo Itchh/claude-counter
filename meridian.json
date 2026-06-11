@@ -1,0 +1,9 @@
+{
+  "scripts": {
+    "setup": "bun install",
+    "run": "bun run dev"
+  },
+  "env": {
+    "copyFrom": ["${MERI_LOCAL_MAIN}/.env.local"]
+  }
+}
