@@ -10,4 +10,11 @@ crons.interval(
   {},
 )
 
+crons.interval(
+  "prune old events",
+  { hours: 24 },
+  internal.leaderboard.pruneOldEvents,
+  {},
+)
+
 export default crons

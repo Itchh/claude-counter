@@ -76,7 +76,10 @@ const ERROR_FLAG_PATH = path.join(HOME, '.leaderboard-reporter.error')
 const REPORTER_DIR = path.dirname(fileURLToPath(import.meta.url))
 
 const CACHE_VERSION = 2
-const REPORT_INTERVAL_MS = 5 * 60_000
+// How often we POST aggregated totals to the server. Local scanning/caching
+// still happens on every file change (see the chokidar watcher), but network
+// writes are throttled to this interval to keep Convex usage low.
+const REPORT_INTERVAL_MS = 60 * 60_000
 const CHOKIDAR_DEBOUNCE_MS = 2_000
 const CACHE_PERSIST_INTERVAL_MS = 5 * 60_000
 const MEMORY_CHECK_INTERVAL_MS = 60_000
@@ -90,6 +93,7 @@ const DRIFT_YIELD_THRESHOLD = 0.01
 const fileCache = new Map<string, FileCacheEntry>()
 let cacheDirty = false
 let scanning = false
+let lastPostAt = 0
 
 function todayKey(d: Date = new Date()): string {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
@@ -383,12 +387,19 @@ async function postToServer(config: Config, aggregate: Aggregate): Promise<void>
   }
 }
 
-async function runScan(config: Config): Promise<void> {
+// `force` bypasses the post throttle (used by startup and the hourly timer so
+// a report always lands on schedule). Watcher-triggered scans leave it false,
+// so they refresh the local cache without hitting the server every few seconds.
+async function runScan(config: Config, { force = false }: { force?: boolean } = {}): Promise<void> {
   if (scanning) return
   scanning = true
   try {
     const aggregate = await aggregateAll()
-    await postToServer(config, aggregate)
+    const now = Date.now()
+    if (force || now - lastPostAt >= REPORT_INTERVAL_MS) {
+      await postToServer(config, aggregate)
+      lastPostAt = now
+    }
     await persistCache()
   } catch (err) {
     console.error('Scan failed:', err)
@@ -524,10 +535,10 @@ async function main(): Promise<void> {
   await checkForUpdates()
 
   await loadCache()
-  await runScan(config)
+  await runScan(config, { force: true })
 
   setInterval(() => {
-    void runScan(config)
+    void runScan(config, { force: true })
   }, REPORT_INTERVAL_MS)
 
   setInterval(() => {

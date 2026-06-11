@@ -19,7 +19,6 @@ const RANGES = [
   { label: '8H', ms: 8 * 60 * 60_000 },
   { label: '24H', ms: 24 * 60 * 60_000 },
   { label: '7D', ms: 7 * 24 * 60 * 60_000 },
-  { label: '30D', ms: 30 * 24 * 60 * 60_000 },
 ] as const
 
 const DEFAULT_COLORS = [

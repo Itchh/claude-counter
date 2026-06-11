@@ -8,6 +8,8 @@
  * @module
  */
 
+import type * as crons from "../crons.js";
+import type * as debugCounts from "../debugCounts.js";
 import type * as http from "../http.js";
 import type * as leaderboard from "../leaderboard.js";
 
@@ -18,6 +20,8 @@ import type {
 } from "convex/server";
 
 declare const fullApi: ApiFromModules<{
+  crons: typeof crons;
+  debugCounts: typeof debugCounts;
   http: typeof http;
   leaderboard: typeof leaderboard;
 }>;
