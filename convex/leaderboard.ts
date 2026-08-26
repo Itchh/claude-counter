@@ -4,6 +4,18 @@ import { internal } from "./_generated/api"
 
 const SNAPSHOT_INTERVAL_MS = 60 * 60_000
 
+function mergeTokensByModel(
+  base: Record<string, number>,
+  incoming: Record<string, number> | undefined,
+): Record<string, number> {
+  if (!incoming) return base
+  const merged = { ...base }
+  for (const [model, count] of Object.entries(incoming)) {
+    merged[model] = (merged[model] ?? 0) + count
+  }
+  return merged
+}
+
 const TOKEN_MILESTONES: ReadonlyArray<number> = [
   1_000_000, 5_000_000, 10_000_000, 25_000_000, 50_000_000,
   100_000_000, 250_000_000, 500_000_000, 1_000_000_000,
@@ -34,6 +46,7 @@ export const get = query({
         inputTokens: user.inputTokens,
         outputTokens: user.outputTokens,
         cacheTokens: user.cacheTokens,
+        tokensByModel: user.tokensByModel ?? {},
         tokensToday: user.tokensToday,
         sessionCount: user.sessionCount,
         lastSeen: user.lastSeen,
@@ -64,6 +77,7 @@ export const upsertDevice = internalMutation({
     inputTokens: v.number(),
     outputTokens: v.number(),
     cacheTokens: v.number(),
+    tokensByModel: v.optional(v.record(v.string(), v.number())),
     tokensToday: v.number(),
     sessionCount: v.number(),
     lastSeen: v.string(),
@@ -83,6 +97,7 @@ export const upsertDevice = internalMutation({
       inputTokens: args.inputTokens,
       outputTokens: args.outputTokens,
       cacheTokens: args.cacheTokens,
+      tokensByModel: args.tokensByModel ?? {},
       tokensToday: args.tokensToday,
       sessionCount: args.sessionCount,
       lastSeen: args.lastSeen,
@@ -105,6 +120,9 @@ export const upsertDevice = internalMutation({
         inputTokens: acc.inputTokens + d.inputTokens,
         outputTokens: acc.outputTokens + d.outputTokens,
         cacheTokens: acc.cacheTokens + d.cacheTokens,
+        // Model totals merge key-wise, not as a scalar: a laptop that only ran
+        // Opus and a desktop that only ran Haiku must both survive the merge.
+        tokensByModel: mergeTokensByModel(acc.tokensByModel, d.tokensByModel),
         tokensToday: acc.tokensToday + d.tokensToday,
         sessionCount: acc.sessionCount + d.sessionCount,
         lastSeen:
@@ -117,6 +135,7 @@ export const upsertDevice = internalMutation({
         inputTokens: 0,
         outputTokens: 0,
         cacheTokens: 0,
+        tokensByModel: {} as Record<string, number>,
         tokensToday: 0,
         sessionCount: 0,
         lastSeen: new Date(0).toISOString(),

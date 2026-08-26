@@ -4,6 +4,8 @@ export interface DevEntry {
   inputTokens: number
   outputTokens: number
   cacheTokens: number
+  /** Raw Claude model id -> tokens. Collapsed to families at render time. */
+  tokensByModel: Record<string, number>
   tokensToday: number
   sessionCount: number
   lastSeen: string
@@ -33,6 +35,7 @@ export interface ReportBody {
   inputTokens: number
   outputTokens: number
   cacheTokens: number
+  tokensByModel?: Record<string, number>
   tokensToday: number
   sessionCount: number
   color?: string
