@@ -1,0 +1,75 @@
+'use client'
+
+import { motion } from 'motion/react'
+import type { LeaderboardEvent } from '@/types'
+import { eventText } from '@/lib/eventText'
+import { PS1 } from './ps1/theme'
+
+function eventColor(event: LeaderboardEvent): string {
+  if (event.color) return event.color
+  if (event.type === 'new_leader') return PS1.hot
+  if (event.type === 'milestone') return PS1.cyan
+  return PS1.textDim
+}
+
+function TickerItems({ events }: { events: ReadonlyArray<LeaderboardEvent> }): React.ReactElement {
+  return (
+    <>
+      {events.map((event) => {
+        const color = eventColor(event)
+        return (
+          <span
+            key={event.id}
+            style={{ display: 'inline-flex', alignItems: 'center', whiteSpace: 'nowrap' }}
+          >
+            <span style={{ color, textShadow: `0 0 8px ${color}50` }}>
+              {eventText(event)}
+            </span>
+            <span style={{ color: PS1.bevelLight, padding: '0 24px' }}>◆</span>
+          </span>
+        )
+      })}
+    </>
+  )
+}
+
+export function Ticker({ events }: { events: ReadonlyArray<LeaderboardEvent> | undefined }): React.ReactElement {
+  return (
+    <motion.div
+      initial={{ opacity: 0 }}
+      animate={{ opacity: 1 }}
+      transition={{ duration: 0.5, delay: 0.4 }}
+      className="ps1-panel-inset ps1-plate"
+      style={{
+        position: 'relative',
+        zIndex: 2,
+        margin: '10px 28px 0',
+        padding: '6px 0',
+        overflow: 'hidden',
+        fontSize: 'clamp(9px, 1.1vw, 13px)',
+      }}
+    >
+      {!events || events.length === 0 ? (
+        <span style={{ color: PS1.textFaint, paddingLeft: '36px' }}>
+          {'>'} Awaiting events…
+        </span>
+      ) : (
+        // Items rendered twice so the loop wraps seamlessly: when the first
+        // copy has scrolled fully out, the second copy is exactly where the
+        // first one started.
+        <div
+          style={{
+            display: 'flex',
+            width: 'max-content',
+            animation: 'tickerScroll 40s linear infinite',
+          }}
+        >
+          <TickerItems events={events} />
+          <TickerItems
+            events={events.map((e) => ({ ...e, id: `${e.id}-dup` }))}
+          />
+        </div>
+      )}
+    </motion.div>
+  )
+}

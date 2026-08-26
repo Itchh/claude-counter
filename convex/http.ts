@@ -2,6 +2,23 @@ import { httpRouter } from "convex/server"
 import { httpAction } from "./_generated/server"
 import { internal } from "./_generated/api"
 
+const MAX_MODEL_KEYS = 64
+const MAX_MODEL_KEY_LENGTH = 128
+
+function parseTokensByModel(raw: unknown): Record<string, number> | undefined {
+  if (typeof raw !== "object" || raw === null || Array.isArray(raw)) return undefined
+  const cleaned: Record<string, number> = {}
+  let count = 0
+  for (const [model, value] of Object.entries(raw as Record<string, unknown>)) {
+    if (count >= MAX_MODEL_KEYS) break
+    if (!model || model.length > MAX_MODEL_KEY_LENGTH) continue
+    if (typeof value !== "number" || !Number.isFinite(value) || value <= 0) continue
+    cleaned[model] = value
+    count++
+  }
+  return Object.keys(cleaned).length > 0 ? cleaned : undefined
+}
+
 const http = httpRouter()
 
 http.route({
@@ -47,6 +64,11 @@ http.route({
       )
     }
 
+    // Reporters older than v3 don't send tokensByModel at all; treat anything
+    // that isn't a plain map of finite positive numbers as absent rather than
+    // letting a malformed payload reach the mutation validator.
+    const tokensByModel = parseTokensByModel(body.tokensByModel)
+
     const color =
       typeof body.color === "string" && /^#[0-9a-fA-F]{6}$/.test(body.color)
         ? body.color
@@ -61,6 +83,7 @@ http.route({
       inputTokens: body.inputTokens ?? 0,
       outputTokens: body.outputTokens ?? 0,
       cacheTokens: body.cacheTokens ?? 0,
+      ...(tokensByModel !== undefined ? { tokensByModel } : {}),
       tokensToday: body.tokensToday ?? 0,
       sessionCount: body.sessionCount ?? 0,
       lastSeen: new Date().toISOString(),

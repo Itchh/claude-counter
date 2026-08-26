@@ -23,6 +23,7 @@ interface FileTotals {
   inputTokens: number
   outputTokens: number
   cacheTokens: number
+  tokensByModel: Record<string, number>
   tokensTodayByDate: Record<string, number>
   linesTotal: number
   linesJsonValid: number
@@ -45,6 +46,7 @@ interface Aggregate {
   inputTokens: number
   outputTokens: number
   cacheTokens: number
+  tokensByModel: Record<string, number>
   tokensToday: number
   sessionCount: number
   schemaHealthy: boolean
@@ -60,7 +62,7 @@ interface JSONLUsage {
 interface JSONLLine {
   type?: string
   timestamp?: string
-  message?: { usage?: JSONLUsage }
+  message?: { model?: string; usage?: JSONLUsage }
 }
 
 interface RunResult {
@@ -75,7 +77,7 @@ const CACHE_PATH = path.join(HOME, '.leaderboard-reporter.cache.json')
 const ERROR_FLAG_PATH = path.join(HOME, '.leaderboard-reporter.error')
 const REPORTER_DIR = path.dirname(fileURLToPath(import.meta.url))
 
-const CACHE_VERSION = 2
+const CACHE_VERSION = 3
 // How often we POST aggregated totals to the server. Local scanning/caching
 // still happens on every file change (see the chokidar watcher), but network
 // writes are throttled to this interval to keep Convex usage low.
@@ -89,6 +91,9 @@ const AUTH_FAILURE_BACKOFF_MS = 60_000
 const FETCH_TIMEOUT_MS = 30_000
 const DRIFT_MIN_SAMPLE = 100
 const DRIFT_YIELD_THRESHOLD = 0.01
+// Claude Code writes this placeholder for locally-generated assistant lines
+// that never hit the API; they always carry zero usage.
+const SYNTHETIC_MODEL = '<synthetic>'
 
 const fileCache = new Map<string, FileCacheEntry>()
 let cacheDirty = false
@@ -173,6 +178,7 @@ async function parseJSONLStreaming(filePath: string): Promise<FileTotals | null>
     inputTokens: 0,
     outputTokens: 0,
     cacheTokens: 0,
+    tokensByModel: {},
     tokensTodayByDate: {},
     linesTotal: 0,
     linesJsonValid: 0,
@@ -213,6 +219,13 @@ async function parseJSONLStreaming(filePath: string): Promise<FileTotals | null>
       totals.cacheTokens += cacheRead + cacheCreate
       totals.totalTokens += sum
       totals.linesWithUsage++
+
+      // Raw model id is stored verbatim; the leaderboard normalises it to a
+      // family label at render time so new dated ids never need a migration.
+      const model = parsed.message.model
+      if (model && model !== SYNTHETIC_MODEL && sum > 0) {
+        totals.tokensByModel[model] = (totals.tokensByModel[model] ?? 0) + sum
+      }
 
       if (parsed.timestamp) {
         const dateKey = dateKeyFromIso(parsed.timestamp)
@@ -258,6 +271,7 @@ async function aggregateAll(): Promise<Aggregate> {
   let tokensToday = 0
   let sessionCount = 0
   let linesJsonValid = 0
+  const tokensByModel: Record<string, number> = {}
   let linesWithUsage = 0
   const today = todayKey()
   const seenPaths = new Set<string>()
@@ -272,6 +286,9 @@ async function aggregateAll(): Promise<Aggregate> {
       inputTokens += totals.inputTokens
       outputTokens += totals.outputTokens
       cacheTokens += totals.cacheTokens
+      for (const [model, count] of Object.entries(totals.tokensByModel ?? {})) {
+        tokensByModel[model] = (tokensByModel[model] ?? 0) + count
+      }
       tokensToday += totals.tokensTodayByDate[today] ?? 0
       sessionCount++
       linesJsonValid += totals.linesJsonValid
@@ -308,6 +325,7 @@ async function aggregateAll(): Promise<Aggregate> {
     inputTokens,
     outputTokens,
     cacheTokens,
+    tokensByModel,
     tokensToday,
     sessionCount,
     schemaHealthy,
