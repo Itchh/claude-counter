@@ -114,4 +114,81 @@ export const PS1_STYLES = `
     0%, 100% { transform: translateY(0); }
     50% { transform: translateY(-2px); }
   }
+
+  /* ---------------------------------------------------------------------
+     Control prompt strip. The slanted bar is the era's signature: a
+     parallelogram cut from a solid, never a rounded pill. The fill is flat
+     and the light edge sits only on the top and left, because a bevel is
+     two lines, not a gradient.
+  --------------------------------------------------------------------- */
+  .ps1-hint-bar {
+    position: relative;
+    transform: skewX(-12deg);
+    background: linear-gradient(90deg, rgba(10, 10, 24, 0.92), rgba(27, 27, 61, 0.78));
+    box-shadow:
+      inset 0 1px 0 0 rgba(77, 77, 146, 0.9),
+      inset 1px 0 0 0 rgba(77, 77, 146, 0.9),
+      inset 0 -1px 0 0 rgba(6, 6, 14, 0.9);
+  }
+
+  /* ---------------------------------------------------------------------
+     Cursor and selection.
+
+     A focused row is not "highlighted" — it is *selected*, which on this
+     hardware meant a hard bright frame and a caret pointing at it. No glow,
+     no scale, no transition on the frame itself: the console redrew the
+     whole box in one field, so it either is selected or it is not.
+  --------------------------------------------------------------------- */
+  .ps1-cursor {
+    position: relative;
+  }
+  .ps1-cursor-on {
+    box-shadow:
+      inset 2px 2px 0 0 #ffb020,
+      inset -2px -2px 0 0 #7a5210;
+    background: #23234d;
+  }
+  /* The caret. Steps rather than slides — a 2px hop on a 400ms beat, which
+     is roughly the blink rate the menus of the period used. */
+  .ps1-cursor-on::before {
+    content: '';
+    position: absolute;
+    left: -14px;
+    top: 50%;
+    width: 0;
+    height: 0;
+    border-top: 6px solid transparent;
+    border-bottom: 6px solid transparent;
+    border-left: 9px solid #ffb020;
+    transform: translateY(-50%);
+    animation: ps1CaretStep 0.8s steps(1, end) infinite;
+  }
+  @keyframes ps1CaretStep {
+    0%, 50% { margin-left: 0; }
+    50.01%, 100% { margin-left: 3px; }
+  }
+
+  /* The panel that opens under a selected row. Inset, darker than its
+     parent, and framed by a single hairline so it reads as carved into the
+     row rather than floating over it. */
+  .ps1-drawer {
+    background: #0d0d20;
+    box-shadow:
+      inset 2px 2px 0 0 #0a0a18,
+      inset -2px -2px 0 0 #34346b;
+  }
+
+  /* Condensed kerning for the bitmap faces. The HUD face is already square,
+     so it wants a touch of tracking to stop numerals fusing, and none of the
+     browser's optical kerning, which fights a fixed-width bitmap grid. */
+  .ps1-hud {
+    font-family: var(--font-ps1-hud);
+    letter-spacing: 0.04em;
+    font-kerning: none;
+  }
+  .ps1-codec {
+    font-family: var(--font-ps1-codec);
+    letter-spacing: 0.02em;
+    font-kerning: none;
+  }
 `

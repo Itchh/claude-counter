@@ -17,4 +17,18 @@ crons.interval(
   {},
 )
 
+crons.interval(
+  "prune old buckets",
+  { hours: 6 },
+  internal.scoring.pruneOldBuckets,
+  {},
+)
+
+crons.interval(
+  "prune old sessions",
+  { hours: 6 },
+  internal.scoring.pruneOldSessions,
+  {},
+)
+
 export default crons
