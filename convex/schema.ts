@@ -69,4 +69,44 @@ export default defineSchema({
     color: v.optional(v.string()),
   }).index("by_timestamp", ["timestamp"])
     .index("by_key_timestamp", ["key", "timestamp"]),
+
+  // Five-minute token buckets. These are what make velocity honest: a delta
+  // between two lifetime totals only tells you an hourly average, whereas a
+  // run of buckets tells you the shape of the hour.
+  buckets: defineTable({
+    userKey: v.string(),
+    deviceId: v.string(),
+    bucketStart: v.number(),
+    tokens: v.number(),
+  })
+    // Per-device rows, because two machines reporting independently must not
+    // clobber each other's counts for the same five minutes.
+    .index("by_userKey_deviceId_bucketStart", ["userKey", "deviceId", "bucketStart"])
+    .index("by_bucketStart", ["bucketStart"])
+    .index("by_userKey_bucketStart", ["userKey", "bucketStart"]),
+
+  scores: defineTable({
+    userKey: v.string(),
+    name: v.string(),
+    color: v.optional(v.string()),
+    period: v.union(v.literal("day"), v.literal("week"), v.literal("month")),
+    /** Period boundary label resolved in Europe/London, e.g. "2026-08-27". */
+    periodKey: v.string(),
+    rawTokens: v.number(),
+    multiplier: v.number(),
+    score: v.number(),
+    updatedAt: v.number(),
+  })
+    .index("by_period_periodKey", ["period", "periodKey"])
+    .index("by_userKey_period_periodKey", ["userKey", "period", "periodKey"]),
+
+  sessions: defineTable({
+    userKey: v.string(),
+    deviceId: v.string(),
+    startedAt: v.number(),
+    lastActivityAt: v.number(),
+  })
+    .index("by_userKey_deviceId_startedAt", ["userKey", "deviceId", "startedAt"])
+    .index("by_userKey_startedAt", ["userKey", "startedAt"])
+    .index("by_startedAt", ["startedAt"]),
 })

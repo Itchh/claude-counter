@@ -16,6 +16,8 @@ interface Config {
   serverUrl: string
   secret: string
   color?: string
+  /** Optional override for how often totals are POSTed. Floored at 5 minutes. */
+  reportIntervalMinutes?: number
 }
 
 interface FileTotals {
@@ -25,9 +27,18 @@ interface FileTotals {
   cacheTokens: number
   tokensByModel: Record<string, number>
   tokensTodayByDate: Record<string, number>
+  /** Token sums keyed by 5-minute UTC bucket start (epoch ms, as a string). */
+  bucketsByMinute: Record<string, number>
+  /** Contiguous runs of assistant activity within this file. */
+  sessions: SessionWindow[]
   linesTotal: number
   linesJsonValid: number
   linesWithUsage: number
+}
+
+interface SessionWindow {
+  startedAt: number
+  lastActivityAt: number
 }
 
 interface FileCacheEntry {
@@ -50,6 +61,10 @@ interface Aggregate {
   tokensToday: number
   sessionCount: number
   schemaHealthy: boolean
+  /** Recent 5-minute token buckets, oldest first. */
+  buckets: ReadonlyArray<{ bucketStart: number; tokens: number }>
+  /** Most recent activity windows, newest first. */
+  sessions: ReadonlyArray<SessionWindow>
 }
 
 interface JSONLUsage {
@@ -77,11 +92,12 @@ const CACHE_PATH = path.join(HOME, '.leaderboard-reporter.cache.json')
 const ERROR_FLAG_PATH = path.join(HOME, '.leaderboard-reporter.error')
 const REPORTER_DIR = path.dirname(fileURLToPath(import.meta.url))
 
-const CACHE_VERSION = 3
+const CACHE_VERSION = 4
 // How often we POST aggregated totals to the server. Local scanning/caching
 // still happens on every file change (see the chokidar watcher), but network
 // writes are throttled to this interval to keep Convex usage low.
-const REPORT_INTERVAL_MS = 60 * 60_000
+const DEFAULT_REPORT_INTERVAL_MS = 60 * 60_000
+const MIN_REPORT_INTERVAL_MS = 5 * 60_000
 const CHOKIDAR_DEBOUNCE_MS = 2_000
 const CACHE_PERSIST_INTERVAL_MS = 5 * 60_000
 const MEMORY_CHECK_INTERVAL_MS = 60_000
@@ -95,10 +111,23 @@ const DRIFT_YIELD_THRESHOLD = 0.01
 // that never hit the API; they always carry zero usage.
 const SYNTHETIC_MODEL = '<synthetic>'
 
+// Velocity resolution. Five minutes is fine enough that a kart visibly reacts
+// within one report, coarse enough that a day of buckets stays small.
+const BUCKET_MS = 5 * 60_000
+// Only recent buckets are worth sending: the server derives *current* velocity
+// and daily score, and anything older is already folded into lifetime totals.
+const BUCKET_RETENTION_MS = 26 * 60 * 60_000
+const MAX_BUCKETS_PER_REPORT = 400
+// A gap longer than this ends a session. Claude Code's own window is 5h, but
+// what we want here is "were they at the keyboard", which idles out far sooner.
+const SESSION_IDLE_GAP_MS = 30 * 60_000
+const MAX_SESSIONS_PER_REPORT = 3
+
 const fileCache = new Map<string, FileCacheEntry>()
 let cacheDirty = false
 let scanning = false
 let lastPostAt = 0
+let reportIntervalMs = DEFAULT_REPORT_INTERVAL_MS
 
 function todayKey(d: Date = new Date()): string {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
@@ -172,6 +201,50 @@ async function walkJSONL(dir: string): Promise<string[]> {
   return results
 }
 
+/**
+ * Collapse a list of activity timestamps into contiguous windows, splitting
+ * wherever the gap exceeds SESSION_IDLE_GAP_MS. Input need not be sorted.
+ */
+function toSessionWindows(times: ReadonlyArray<number>): SessionWindow[] {
+  if (times.length === 0) return []
+  const sorted = [...times].sort((a, b) => a - b)
+  const windows: SessionWindow[] = []
+  let start = sorted[0]
+  let previous = sorted[0]
+
+  for (let i = 1; i < sorted.length; i++) {
+    const at = sorted[i]
+    if (at - previous > SESSION_IDLE_GAP_MS) {
+      windows.push({ startedAt: start, lastActivityAt: previous })
+      start = at
+    }
+    previous = at
+  }
+  windows.push({ startedAt: start, lastActivityAt: previous })
+  return windows
+}
+
+/**
+ * Merge overlapping or near-touching windows from different transcripts. Two
+ * projects open at once are one human session, not two.
+ */
+function mergeSessionWindows(windows: ReadonlyArray<SessionWindow>): SessionWindow[] {
+  if (windows.length === 0) return []
+  const sorted = [...windows].sort((a, b) => a.startedAt - b.startedAt)
+  const merged: SessionWindow[] = [{ ...sorted[0] }]
+
+  for (let i = 1; i < sorted.length; i++) {
+    const current = sorted[i]
+    const last = merged[merged.length - 1]
+    if (current.startedAt - last.lastActivityAt <= SESSION_IDLE_GAP_MS) {
+      last.lastActivityAt = Math.max(last.lastActivityAt, current.lastActivityAt)
+    } else {
+      merged.push({ ...current })
+    }
+  }
+  return merged
+}
+
 async function parseJSONLStreaming(filePath: string): Promise<FileTotals | null> {
   const totals: FileTotals = {
     totalTokens: 0,
@@ -180,10 +253,17 @@ async function parseJSONLStreaming(filePath: string): Promise<FileTotals | null>
     cacheTokens: 0,
     tokensByModel: {},
     tokensTodayByDate: {},
+    bucketsByMinute: {},
+    sessions: [],
     linesTotal: 0,
     linesJsonValid: 0,
     linesWithUsage: 0,
   }
+
+  // Lines within a transcript are chronological in practice, but a resumed or
+  // forked session can emit them out of order. Collect and sort rather than
+  // trusting file order, or one stray line splits a session in two.
+  const activityTimes: number[] = []
 
   return await new Promise<FileTotals | null>((resolve) => {
     const stream = createReadStream(filePath, { encoding: 'utf-8' })
@@ -232,10 +312,21 @@ async function parseJSONLStreaming(filePath: string): Promise<FileTotals | null>
         if (dateKey) {
           totals.tokensTodayByDate[dateKey] = (totals.tokensTodayByDate[dateKey] ?? 0) + sum
         }
+
+        const at = new Date(parsed.timestamp).getTime()
+        if (!Number.isNaN(at)) {
+          activityTimes.push(at)
+          const bucketStart = Math.floor(at / BUCKET_MS) * BUCKET_MS
+          const bucketKey = String(bucketStart)
+          totals.bucketsByMinute[bucketKey] = (totals.bucketsByMinute[bucketKey] ?? 0) + sum
+        }
       }
     })
 
-    rl.on('close', () => resolve(totals))
+    rl.on('close', () => {
+      totals.sessions = toSessionWindows(activityTimes)
+      resolve(totals)
+    })
   })
 }
 
@@ -275,6 +366,9 @@ async function aggregateAll(): Promise<Aggregate> {
   let linesWithUsage = 0
   const today = todayKey()
   const seenPaths = new Set<string>()
+  const bucketTotals = new Map<number, number>()
+  const allSessions: SessionWindow[] = []
+  const bucketFloor = Date.now() - BUCKET_RETENTION_MS
 
   for (const dir of dirs) {
     const files = await walkJSONL(dir)
@@ -293,6 +387,17 @@ async function aggregateAll(): Promise<Aggregate> {
       sessionCount++
       linesJsonValid += totals.linesJsonValid
       linesWithUsage += totals.linesWithUsage
+
+      // Buckets from v3 caches don't exist; the nullish guards keep an
+      // un-refreshed cache entry from crashing the scan.
+      for (const [bucketKey, count] of Object.entries(totals.bucketsByMinute ?? {})) {
+        const bucketStart = Number(bucketKey)
+        if (!Number.isFinite(bucketStart) || bucketStart < bucketFloor) continue
+        bucketTotals.set(bucketStart, (bucketTotals.get(bucketStart) ?? 0) + count)
+      }
+      for (const session of totals.sessions ?? []) {
+        if (session.lastActivityAt >= bucketFloor) allSessions.push(session)
+      }
     }
   }
 
@@ -320,6 +425,18 @@ async function aggregateAll(): Promise<Aggregate> {
     }
   }
 
+  // Newest buckets are the ones that drive velocity, so if we have to truncate
+  // we drop the oldest. Sent oldest-first so the server can apply in order.
+  const buckets = Array.from(bucketTotals.entries())
+    .map(([bucketStart, count]) => ({ bucketStart, tokens: count }))
+    .sort((a, b) => b.bucketStart - a.bucketStart)
+    .slice(0, MAX_BUCKETS_PER_REPORT)
+    .reverse()
+
+  const sessions = mergeSessionWindows(allSessions)
+    .sort((a, b) => b.startedAt - a.startedAt)
+    .slice(0, MAX_SESSIONS_PER_REPORT)
+
   return {
     totalTokens,
     inputTokens,
@@ -329,6 +446,8 @@ async function aggregateAll(): Promise<Aggregate> {
     tokensToday,
     sessionCount,
     schemaHealthy,
+    buckets,
+    sessions,
   }
 }
 
@@ -377,7 +496,16 @@ async function postToServer(config: Config, aggregate: Aggregate): Promise<void>
         email: config.email,
         deviceId: config.deviceId,
         secret: config.secret,
-        ...aggregate,
+        totalTokens: aggregate.totalTokens,
+        inputTokens: aggregate.inputTokens,
+        outputTokens: aggregate.outputTokens,
+        cacheTokens: aggregate.cacheTokens,
+        tokensByModel: aggregate.tokensByModel,
+        tokensToday: aggregate.tokensToday,
+        sessionCount: aggregate.sessionCount,
+        schemaHealthy: aggregate.schemaHealthy,
+        buckets: aggregate.buckets,
+        sessions: aggregate.sessions,
         ...(config.color ? { color: config.color } : {}),
       }),
       signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
@@ -414,7 +542,7 @@ async function runScan(config: Config, { force = false }: { force?: boolean } = 
   try {
     const aggregate = await aggregateAll()
     const now = Date.now()
-    if (force || now - lastPostAt >= REPORT_INTERVAL_MS) {
+    if (force || now - lastPostAt >= reportIntervalMs) {
       await postToServer(config, aggregate)
       lastPostAt = now
     }
@@ -544,9 +672,30 @@ async function loadConfig(): Promise<Config> {
   return parsed as Config
 }
 
+function resolveReportInterval(config: Config): number {
+  const minutes = config.reportIntervalMinutes
+  if (typeof minutes !== 'number' || !Number.isFinite(minutes)) {
+    return DEFAULT_REPORT_INTERVAL_MS
+  }
+  const requested = minutes * 60_000
+  if (requested < MIN_REPORT_INTERVAL_MS) {
+    console.warn(
+      `reportIntervalMinutes=${minutes} is below the ${
+        MIN_REPORT_INTERVAL_MS / 60_000
+      }-minute floor; using the floor instead.`
+    )
+    return MIN_REPORT_INTERVAL_MS
+  }
+  return requested
+}
+
 async function main(): Promise<void> {
   const config = await loadConfig()
-  console.log(`Reporter starting for ${config.name} → ${config.serverUrl}`)
+  reportIntervalMs = resolveReportInterval(config)
+  console.log(
+    `Reporter starting for ${config.name} → ${config.serverUrl} ` +
+      `(reporting every ${Math.round(reportIntervalMs / 60_000)}m)`
+  )
 
   // Pull any published updates before we do anything else. If the code changed
   // we exit here and launchd will respawn us running the new version.
@@ -557,7 +706,7 @@ async function main(): Promise<void> {
 
   setInterval(() => {
     void runScan(config, { force: true })
-  }, REPORT_INTERVAL_MS)
+  }, reportIntervalMs)
 
   setInterval(() => {
     void persistCache()

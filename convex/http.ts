@@ -19,6 +19,50 @@ function parseTokensByModel(raw: unknown): Record<string, number> | undefined {
   return Object.keys(cleaned).length > 0 ? cleaned : undefined
 }
 
+const MAX_BUCKETS = 400
+const MAX_SESSIONS = 8
+
+interface ParsedBucket {
+  bucketStart: number
+  tokens: number
+}
+
+interface ParsedSession {
+  startedAt: number
+  lastActivityAt: number
+}
+
+// Reporters older than v4 send neither of these. Anything that isn't the exact
+// expected shape is treated as absent rather than allowed to reach a validator.
+function parseBuckets(raw: unknown): ParsedBucket[] {
+  if (!Array.isArray(raw)) return []
+  const cleaned: ParsedBucket[] = []
+  for (const item of raw) {
+    if (cleaned.length >= MAX_BUCKETS) break
+    if (typeof item !== "object" || item === null) continue
+    const { bucketStart, tokens } = item as Record<string, unknown>
+    if (typeof bucketStart !== "number" || !Number.isFinite(bucketStart)) continue
+    if (typeof tokens !== "number" || !Number.isFinite(tokens) || tokens <= 0) continue
+    cleaned.push({ bucketStart, tokens })
+  }
+  return cleaned
+}
+
+function parseSessions(raw: unknown): ParsedSession[] {
+  if (!Array.isArray(raw)) return []
+  const cleaned: ParsedSession[] = []
+  for (const item of raw) {
+    if (cleaned.length >= MAX_SESSIONS) break
+    if (typeof item !== "object" || item === null) continue
+    const { startedAt, lastActivityAt } = item as Record<string, unknown>
+    if (typeof startedAt !== "number" || !Number.isFinite(startedAt)) continue
+    if (typeof lastActivityAt !== "number" || !Number.isFinite(lastActivityAt)) continue
+    if (lastActivityAt < startedAt) continue
+    cleaned.push({ startedAt, lastActivityAt })
+  }
+  return cleaned
+}
+
 const http = httpRouter()
 
 http.route({
@@ -88,6 +132,21 @@ http.route({
       sessionCount: body.sessionCount ?? 0,
       lastSeen: new Date().toISOString(),
     })
+
+    // v4 detail. Absent for older reporters, which keep working exactly as
+    // before — they simply generate no bucket data and race at a flat pace.
+    const buckets = parseBuckets(body.buckets)
+    const sessions = parseSessions(body.sessions)
+    if (buckets.length > 0 || sessions.length > 0) {
+      await ctx.runMutation(internal.scoring.applyReportDetail, {
+        userKey: email.toLowerCase(),
+        deviceId,
+        name,
+        ...(color !== undefined ? { color } : {}),
+        buckets,
+        sessions,
+      })
+    }
 
     return new Response(JSON.stringify({ ok: true }), {
       status: 200,

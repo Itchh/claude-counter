@@ -6,6 +6,19 @@
 // distance fog to hide the near clip plane, and chunky bevelled menu chrome
 // drawn from 2px hard-edged highlights rather than gradients or blur.
 
+/**
+ * The two faces, split by job. HUD is the square condensed one from the life
+ * bars — labels, numbers, menu items, anything that has to sit in a box.
+ * Codec is wider and only earns its place on headings and idents.
+ *
+ * Declared in globals.css; referenced here so components never hardcode the
+ * family string.
+ */
+export const FONTS = {
+  hud: 'var(--font-ps1-hud)',
+  codec: 'var(--font-ps1-codec)',
+} as const
+
 export const PS1 = {
   void: '#07070d',
   fog: '#141430',
