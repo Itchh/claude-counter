@@ -53,11 +53,11 @@ export function Racer({
   return (
     <group ref={groupRef}>
       {modelUrl ? (
-        <Suspense fallback={<Kart color={color} speedBox={speedBox} isActive={isActive} />}>
+        <Suspense fallback={<Kart index={index} color={color} speedBox={speedBox} isActive={isActive} />}>
           <GltfKart url={modelUrl} />
         </Suspense>
       ) : (
-        <Kart color={color} speedBox={speedBox} isActive={isActive} />
+        <Kart index={index} color={color} speedBox={speedBox} isActive={isActive} />
       )}
     </group>
   )
