@@ -1,4 +1,4 @@
 {
   "framework": "nextjs",
-  "buildCommand": "npx convex deploy --cmd 'npm run build'"
+  "buildCommand": "if [ -n \"$CONVEX_DEPLOY_KEY\" ]; then bunx convex deploy --cmd 'bun run build'; else bun run build; fi"
 }
