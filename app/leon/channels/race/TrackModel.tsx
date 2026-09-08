@@ -5,8 +5,9 @@ import { useGLTF } from '@react-three/drei'
 import * as THREE from 'three'
 import { createPs1Material, configurePs1Texture } from './Ps1Material'
 import { useCircuit } from './CircuitContext'
-import { ROAD_CLEARANCE } from './circuit'
+import { ROAD_CLEARANCE, type Circuit, type RoadCorridor } from './circuit'
 import { buildGroundField } from './groundField'
+import { buildBarrierField, type BarrierField } from './barrierField'
 import type { TrackDefinition, TrackSurface } from './tracks/types'
 
 // An imported circuit, rebuilt as PS1 geometry.
@@ -198,8 +199,14 @@ function SplineGrounding({ model }: { readonly model: THREE.Object3D }): null {
       data: smoothed,
     })
 
+    // The width, now that the heights are in. Deliberately after the height
+    // field is published rather than before: the corridor's rays are fired at
+    // road level, and road level is the thing that was just measured.
+    circuit.setCorridor(measureCorridor(circuit, buildBarrierField(model)))
+
     return () => {
       circuit.setHeightField(null)
+      circuit.setCorridor(null)
       circuit.setGround(null)
     }
   }, [model, circuit])
@@ -245,6 +252,199 @@ function fillGaps(data: Float32Array, rows: number, slots: number): void {
       data[index] = replacement
     }
   }
+}
+
+// ---------------------------------------------------------------------------
+// The corridor
+//
+// How wide the road really is, measured the same way the height was: by
+// asking the model rather than the JSON. The nominal half width is a single
+// number for a whole lap, and a lap is not one width — it pinches under a
+// bridge, opens at a hairpin, and the hand-traced centreline does not sit at
+// the exact middle of it everywhere. Cars bounded by that one number
+// therefore drove through the guardrails wherever the truth was narrower than
+// the guess, which is the thing on screen in the report this fixes.
+// ---------------------------------------------------------------------------
+
+/** Points around the lap where the road's width is measured. */
+const CORRIDOR_SAMPLES = 192
+/**
+ * Heights above the road the sideways rays are fired at, in game units.
+ *
+ * Two, and low. A guardrail's rail is at knee height and its posts are below
+ * that, so one ray at bonnet height sails over the very thing it is looking
+ * for; one ray at wheel height misses a rail with a gap under it. The nearer
+ * of the two answers wins.
+ */
+const CORRIDOR_PROBE_HEIGHTS: ReadonlyArray<number> = [0.4, 1.05]
+/**
+ * How far a car is kept off a measured wall, in game units. A car is 1.7
+ * across in the simulation's own contact box, so this is its shoulder plus a
+ * little air — enough that a scrape reads as a scrape rather than as a body
+ * halfway through a fence.
+ */
+const BARRIER_CLEARANCE = 1.15
+/**
+ * Narrowest the corridor may get. A gate, a tunnel mouth or a stray triangle
+ * can measure narrower than a car, and a corridor narrower than a car is a
+ * field of cars pinned to one line.
+ */
+const MIN_CORRIDOR_HALF = 1.8
+/**
+ * How far the corridor's centre may be moved off the traced line, as a
+ * fraction of the nominal half width.
+ *
+ * The shift is the correction for a trace that runs closer to one barrier
+ * than the other, and it is capped because it can only ever be a correction.
+ * A trace that has left the road entirely wants re-drawing, not nudging —
+ * and letting this pull cars an unbounded distance sideways would hide that
+ * rather than show it.
+ */
+const MAX_CORRIDOR_SHIFT = 0.8
+/** How far past the nominal width the rays look for a wall. */
+const CORRIDOR_PROBE_REACH = 1.9
+
+const UP = new THREE.Vector3(0, 1, 0)
+
+/**
+ * Measures the free road around the lap: where its middle is, and how much of
+ * it there is either side of that middle.
+ *
+ * A ray each way at each sample, at two heights, taking the nearest thing it
+ * hits — roughly eight hundred queries against an index built for the
+ * purpose, which is milliseconds once at mount. Where nothing is hit the
+ * nominal width stands, so an open circuit with no barriers behaves exactly
+ * as it did before.
+ */
+function measureCorridor(circuit: Circuit, barriers: BarrierField): RoadCorridor | null {
+  if (barriers.size === 0) return null
+
+  const nominal = circuit.halfWidth
+  const reach = nominal * CORRIDOR_PROBE_REACH
+  const maxShift = nominal * MAX_CORRIDOR_SHIFT
+  const centre = new Float32Array(CORRIDOR_SAMPLES)
+  const halfWidth = new Float32Array(CORRIDOR_SAMPLES)
+  const point = new THREE.Vector3()
+  const tangent = new THREE.Vector3()
+  const normal = new THREE.Vector3()
+
+  const nearestWall = (side: 1 | -1): number => {
+    let nearest = Infinity
+    for (const height of CORRIDOR_PROBE_HEIGHTS) {
+      const hit = barriers.distanceTo(
+        point.x,
+        point.y + height,
+        point.z,
+        normal.x * side,
+        normal.z * side,
+        reach,
+      )
+      if (hit < nearest) nearest = hit
+    }
+    return nearest
+  }
+
+  for (let row = 0; row < CORRIDOR_SAMPLES; row++) {
+    circuit.sampleInto(row / CORRIDOR_SAMPLES, 0, point, tangent)
+    // The same convention the whole circuit uses: positive lateral lies along
+    // UP × tangent. Measuring in any other frame would put the correction on
+    // the wrong side of the road.
+    normal.crossVectors(UP, tangent).normalize()
+
+    const right = nearestWall(1)
+    const left = nearestWall(-1)
+
+    // Limits as signed offsets from the traced line. An unfound wall leaves
+    // the nominal width standing on that side.
+    const rightLimit = Number.isFinite(right)
+      ? Math.min(nominal, Math.max(-maxShift, right - BARRIER_CLEARANCE))
+      : nominal
+    const leftLimit = Number.isFinite(left)
+      ? Math.max(-nominal, Math.min(maxShift, -(left - BARRIER_CLEARANCE)))
+      : -nominal
+
+    const measuredCentre = (rightLimit + leftLimit) / 2
+    const measuredHalf = (rightLimit - leftLimit) / 2
+    centre[row] = Math.max(-maxShift, Math.min(maxShift, measuredCentre))
+    halfWidth[row] = Math.max(MIN_CORRIDOR_HALF, measuredHalf)
+  }
+
+  smoothCorridor(centre, halfWidth)
+  reportCorridor(circuit, centre, halfWidth)
+  return { samples: CORRIDOR_SAMPLES, centre, halfWidth }
+}
+
+/**
+ * Says out loud what the road turned out to be.
+ *
+ * This is the readout that tells a trace apart from a road. The corridor can
+ * correct a centreline that runs a metre wide of the tarmac; it cannot rescue
+ * one that has left the road altogether, and the two failures look identical
+ * on screen — cars in the wrong place. They do not look identical here: a
+ * good trace pins to its nominal width with a shift near zero, and a trace
+ * that has wandered off pegs the shift at its cap for a long run of samples.
+ * A line in the console beats guessing from a screenshot.
+ */
+function reportCorridor(circuit: Circuit, centre: Float32Array, halfWidth: Float32Array): void {
+  let narrowest = Infinity
+  let widestShift = 0
+  let pegged = 0
+  const cap = circuit.halfWidth * MAX_CORRIDOR_SHIFT - 0.05
+  for (let row = 0; row < centre.length; row++) {
+    narrowest = Math.min(narrowest, halfWidth[row])
+    widestShift = Math.max(widestShift, Math.abs(centre[row]))
+    if (Math.abs(centre[row]) >= cap) pegged++
+  }
+  const peggedShare = Math.round((pegged / centre.length) * 100)
+  // The median as well as the extreme. One pinched sample is a gantry leg or
+  // a tunnel mouth and is fine; a median at the floor means the rays are
+  // finding something that is not a barrier, and the whole field is being
+  // held on one line for a lap.
+  const sorted = Float32Array.from(halfWidth).sort()
+  const median = sorted[Math.floor(sorted.length / 2)]
+  console.info(
+    `${circuit.definition.slug}: road corridor measured — ` +
+      `nominal half width ${circuit.halfWidth.toFixed(1)}, ` +
+      `median ${median.toFixed(1)}, narrowest ${narrowest.toFixed(1)}, ` +
+      `largest centreline correction ${widestShift.toFixed(1)} (${peggedShare}% of the lap at the cap).`,
+  )
+  if (peggedShare > 25) {
+    console.warn(
+      `${circuit.definition.slug}: the traced centreline is off the road for a ` +
+        'quarter of the lap or more. The corridor is holding the cars off the ' +
+        'barriers, but the line itself wants re-tracing — see scripts/bakeTrack.mjs.',
+    )
+  }
+}
+
+/**
+ * Takes the measurement noise out.
+ *
+ * The width runs through a three-tap *minimum* before it is averaged, because
+ * the two errors here are not symmetrical: a ray that missed a rail through
+ * a gap in it reports the road as wider than it is, and one over-wide sample
+ * is a car put through a barrier. Averaging alone would spread that error
+ * over its neighbours rather than remove it. The centre is only averaged —
+ * there is no safe side to a mis-centred corridor, and a smooth line is what
+ * stops the field being nudged sideways sample by sample.
+ */
+function smoothCorridor(centre: Float32Array, halfWidth: Float32Array): void {
+  const samples = centre.length
+  const narrowed = new Float32Array(samples)
+  for (let row = 0; row < samples; row++) {
+    const before = halfWidth[(row - 1 + samples) % samples]
+    const after = halfWidth[(row + 1) % samples]
+    narrowed[row] = Math.min(halfWidth[row], before, after)
+  }
+
+  const smoothedCentre = new Float32Array(samples)
+  for (let row = 0; row < samples; row++) {
+    const previous = (row - 1 + samples) % samples
+    const next = (row + 1) % samples
+    smoothedCentre[row] = (centre[previous] + centre[row] + centre[next]) / 3
+    halfWidth[row] = (narrowed[previous] + narrowed[row] + narrowed[next]) / 3
+  }
+  centre.set(smoothedCentre)
 }
 
 /**

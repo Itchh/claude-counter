@@ -37,6 +37,30 @@ export interface HeightField {
   readonly data: Float32Array
 }
 
+/**
+ * The gap the cars actually have to drive down, measured around the lap.
+ *
+ * Two numbers per sample, both in track units sideways off the traced
+ * centreline: where the middle of the free road is, and how much of it there
+ * is either side of that middle. A circuit with no measurement runs on its
+ * nominal half width, which is what every track did before — and is exactly
+ * the assumption that put cars through the barriers wherever the real road
+ * was narrower than the number, or the trace ran off to one side of it.
+ */
+export interface RoadCorridor {
+  readonly samples: number
+  /** Lateral offset of the free road's centre from the spline, per sample. */
+  readonly centre: Float32Array
+  /** Half the free width, measured around that centre. */
+  readonly halfWidth: Float32Array
+}
+
+/** Somewhere to put a corridor lookup without allocating in a frame loop. */
+export interface CorridorSample {
+  centre: number
+  halfWidth: number
+}
+
 export interface Circuit {
   readonly definition: TrackDefinition
   readonly curve: THREE.CatmullRomCurve3
@@ -120,6 +144,26 @@ export interface Circuit {
    */
   setHeightField(field: HeightField | null): void
   /**
+   * Overrides the nominal road width with a measured corridor.
+   *
+   * Same argument as `setHeightField`, one axis over. The spline carries a
+   * single half width for the whole lap, which is a fiction on any real
+   * circuit: a road narrows into a bridge, opens out at a hairpin, and the
+   * traced line does not sit at the exact middle of it everywhere. Measuring
+   * the gap between the barriers gives the simulation somewhere true to keep
+   * the cars, and gives it per point on the lap rather than per track.
+   *
+   * Null clears it, and the circuit falls back to its nominal width.
+   */
+  setCorridor(corridor: RoadCorridor | null): void
+  /** True once a corridor has been measured. */
+  hasCorridor(): boolean
+  /**
+   * The free road at a point on the lap. Allocation-free: writes into `out`,
+   * because the simulation asks once per car per frame.
+   */
+  corridorInto(t: number, out: CorridorSample): void
+  /**
    * Registers the loaded circuit's ground, indexed for lookup.
    *
    * Everything that has to know where the world *is* rather than where the
@@ -202,7 +246,30 @@ export function createCircuit(definition: TrackDefinition): Circuit {
   // See setHeightField on the interface. Read every frame by sampleInto,
   // so it lives in a closure rather than behind any kind of lookup.
   let heightField: HeightField | null = null
+  let corridor: RoadCorridor | null = null
   let ground: GroundField | null = null
+
+  /**
+   * Linear interpolation around the lap, which wraps. Two samples either side
+   * of a barrier's end would otherwise step the corridor by a metre between
+   * one frame and the next, and a car sitting on the limit would be shoved
+   * sideways by the measurement rather than by the road.
+   */
+  const corridorInto = (t: number, out: CorridorSample): void => {
+    if (!corridor || corridor.samples === 0) {
+      out.centre = 0
+      out.halfWidth = halfWidth
+      return
+    }
+    const wrapped = ((t % 1) + 1) % 1
+    const scaled = wrapped * corridor.samples
+    const row = Math.floor(scaled) % corridor.samples
+    const next = (row + 1) % corridor.samples
+    const blend = scaled - Math.floor(scaled)
+    out.centre = corridor.centre[row] + (corridor.centre[next] - corridor.centre[row]) * blend
+    out.halfWidth =
+      corridor.halfWidth[row] + (corridor.halfWidth[next] - corridor.halfWidth[row]) * blend
+  }
 
   /**
    * Bilinear lookup into the measured road: around the lap, which wraps, and
@@ -353,6 +420,11 @@ export function createCircuit(definition: TrackDefinition): Circuit {
     setHeightField: (field) => {
       heightField = field
     },
+    setCorridor: (measured) => {
+      corridor = measured
+    },
+    hasCorridor: () => corridor !== null,
+    corridorInto,
     setGround: (field) => {
       ground = field
     },

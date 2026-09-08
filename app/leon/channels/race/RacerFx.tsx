@@ -23,16 +23,46 @@ import { BOOST_THRESHOLD, speedFraction, type SimRacer } from './useRaceSim'
 /** Particles in flight at once, across all cars. */
 const FLAME_POOL = 180
 const SMOKE_POOL = 240
+/**
+ * Impact flashes in flight. Small: a flash lives a fifth of a second and the
+ * whole grid can only crash so often, so this is generous for eight cars.
+ */
+const IMPACT_POOL = 40
 
 /** Flame lifetime, seconds. Very short: this is a flare, not a plume. */
 const FLAME_LIFE = 0.34
 const SMOKE_LIFE = 1.15
+/**
+ * Impact flash lifetime, seconds.
+ *
+ * Two frames at 60Hz would be a glitch and half a second would be an
+ * explosion. A fifth of a second is the era's own answer — the sprite is on
+ * screen long enough to be *seen* to have happened and gone before the eye
+ * can examine it, which is the whole reason it can be four white shapes on a
+ * canvas rather than a simulation.
+ */
+const IMPACT_LIFE = 0.2
 
 /** Particles per second, per car, at full effect. */
 const FLAME_RATE = 34
 const SMOKE_RATE = 30
 /** Smoke released in one go when two cars touch. */
 const BUMP_PUFF = 18
+/** Sparks thrown off a car-to-car shunt, and off a scrape along a barrier. */
+const BUMP_SPARKS = 16
+const WALL_SPARKS = 12
+/** Smoke released in one go when a car scrubs the barrier. */
+const WALL_PUFF = 10
+/** How fast a spark leaves the point of contact, in units per second. */
+const SPARK_SPEED = 9
+/** Spark lifetime, seconds. Shorter than the exhaust's — these are chips. */
+const SPARK_LIFE = 0.3
+
+/** How big the flash is at the moment of contact, and what it grows to. */
+const IMPACT_SIZE_START = 1.1
+const IMPACT_SIZE_END = 2.6
+/** How high off the road a flash sits: bumper height, not roof height. */
+const IMPACT_HEIGHT = 0.5
 
 /** How hard a car must be sliding before the tyres let go visibly. */
 const SMOKE_THRESHOLD = 0.42
@@ -96,7 +126,61 @@ function getSprite(): THREE.Texture {
   return texture
 }
 
+/**
+ * The impact sprite: a four-pointed star with a hot square core, drawn once
+ * into a 16px canvas and nearest-filtered like everything else.
+ *
+ * Hand-drawn rather than derived from a gradient because this is the one
+ * effect in the scene that is openly a *symbol*. The era did not simulate a
+ * collision, it stamped a shape over it — and the shape is doing something a
+ * puff of smoke cannot: saying "that was a hit" in the one frame a glance
+ * gets. Sixteen pixels is deliberate. Blown up to two metres it is visibly a
+ * handful of squares, which is the same grid the cars and the road are on.
+ */
+let sharedImpactSprite: THREE.Texture | null = null
+
+function getImpactSprite(): THREE.Texture {
+  if (sharedImpactSprite) return sharedImpactSprite
+
+  const size = 16
+  const canvas = document.createElement('canvas')
+  canvas.width = size
+  canvas.height = size
+  const context = canvas.getContext('2d')
+  if (!context) {
+    console.warn('RacerFx: 2D context unavailable; impacts will not be drawn.')
+    sharedImpactSprite = new THREE.Texture()
+    return sharedImpactSprite
+  }
+
+  context.clearRect(0, 0, size, size)
+  context.fillStyle = '#ffffff'
+  // Four arms and a core, in whole pixels. A star drawn with strokes and
+  // anti-aliasing would arrive as grey fringes, and grey fringes on an
+  // additive sprite are a smudge.
+  const arms: ReadonlyArray<readonly [number, number, number, number]> = [
+    [7, 0, 2, 16],
+    [0, 7, 16, 2],
+    [5, 5, 6, 6],
+  ]
+  for (const [x, y, width, height] of arms) context.fillRect(x, y, width, height)
+  // The diagonals, at half strength — what turns a plus into a burst.
+  context.fillStyle = 'rgba(255,255,255,0.55)'
+  for (let i = 2; i < 14; i++) {
+    context.fillRect(i, i, 1, 1)
+    context.fillRect(i, 15 - i, 1, 1)
+  }
+
+  const texture = new THREE.CanvasTexture(canvas)
+  texture.magFilter = THREE.NearestFilter
+  texture.minFilter = THREE.NearestFilter
+  texture.generateMipmaps = false
+  sharedImpactSprite = texture
+  return texture
+}
+
 const POINT_VERTEX = `
+  uniform float uMaxSize;
   attribute float aSize;
   attribute vec4 aColor;
   varying vec4 vColor;
@@ -109,10 +193,19 @@ const POINT_VERTEX = `
     // camera is close enough that one particle would cover the picture. The
     // onboard shot sits a couple of units from the exhaust, which is exactly
     // where an unclamped sprite becomes a full-screen wash of orange.
-    gl_PointSize = min(24.0, aSize * (300.0 / max(0.001, -viewPosition.z)));
+    // The clamp is per-effect: 24px is right for a particle in a stream of
+    // two hundred, and wrong for a single flash that IS the event — capping
+    // an impact at the same size hid every crash the camera was close enough
+    // to care about.
+    gl_PointSize = min(uMaxSize, aSize * (300.0 / max(0.001, -viewPosition.z)));
     gl_Position = projectionMatrix * viewPosition;
   }
 `
+
+/** Screen-space ceiling for a stream particle, in pixels. */
+const PARTICLE_MAX_PIXELS = 24
+/** ...and for an impact flash, which is one sprite and the point of the shot. */
+const IMPACT_MAX_PIXELS = 220
 
 const POINT_FRAGMENT = `
   uniform sampler2D uMap;
@@ -205,12 +298,28 @@ export function RacerFx({ racersRef, enabled }: RacerFxProps): React.ReactElemen
   const circuit = useCircuit()
   const flame = useMemo(() => createPool(FLAME_POOL), [])
   const smoke = useMemo(() => createPool(SMOKE_POOL), [])
+  const impact = useMemo(() => createPool(IMPACT_POOL), [])
 
   const sprite = useMemo(getSprite, [])
+  const impactSprite = useMemo(getImpactSprite, [])
+  const impactMaterial = useMemo(
+    () =>
+      new THREE.ShaderMaterial({
+        uniforms: { uMap: { value: impactSprite }, uMaxSize: { value: IMPACT_MAX_PIXELS } },
+        vertexShader: POINT_VERTEX,
+        fragmentShader: POINT_FRAGMENT,
+        transparent: true,
+        depthWrite: false,
+        // Additive and depth-tested but never occluding: a flash is light, and
+        // light off a bumper does not hide the car it came from.
+        blending: THREE.AdditiveBlending,
+      }),
+    [impactSprite],
+  )
   const flameMaterial = useMemo(
     () =>
       new THREE.ShaderMaterial({
-        uniforms: { uMap: { value: sprite } },
+        uniforms: { uMap: { value: sprite }, uMaxSize: { value: PARTICLE_MAX_PIXELS } },
         vertexShader: POINT_VERTEX,
         fragmentShader: POINT_FRAGMENT,
         transparent: true,
@@ -224,7 +333,7 @@ export function RacerFx({ racersRef, enabled }: RacerFxProps): React.ReactElemen
   const smokeMaterial = useMemo(
     () =>
       new THREE.ShaderMaterial({
-        uniforms: { uMap: { value: sprite } },
+        uniforms: { uMap: { value: sprite }, uMaxSize: { value: PARTICLE_MAX_PIXELS } },
         vertexShader: POINT_VERTEX,
         fragmentShader: POINT_FRAGMENT,
         transparent: true,
@@ -241,24 +350,35 @@ export function RacerFx({ racersRef, enabled }: RacerFxProps): React.ReactElemen
     return () => {
       flameMaterial.dispose()
       smokeMaterial.dispose()
+      impactMaterial.dispose()
       flame.geometry.dispose()
       smoke.geometry.dispose()
+      impact.geometry.dispose()
     }
-  }, [flame, smoke, flameMaterial, smokeMaterial])
+  }, [flame, smoke, impact, flameMaterial, smokeMaterial, impactMaterial])
 
   // Emission carries a fractional remainder between frames. Without it a rate
   // below one particle per frame rounds to zero and the effect never fires.
   const flameDebt = useRef<number[]>([])
   const smokeDebt = useRef<number[]>([])
   const lastBumps = useRef<number[]>([])
+  const lastWalls = useRef<number[]>([])
 
   const position = useMemo(() => new THREE.Vector3(), [])
   const tangent = useMemo(() => new THREE.Vector3(), [])
   const normal = useMemo(() => new THREE.Vector3(), [])
+  // The point of contact is not the car's own position — see `impactT` on the
+  // simulation — so it is sampled separately rather than borrowed.
+  const contact = useMemo(() => new THREE.Vector3(), [])
+  const contactTangent = useMemo(() => new THREE.Vector3(), [])
+  const drawnThisFrame = useMemo<number[]>(() => [], [])
 
   useFrame((_, delta) => {
     const dt = Math.min(delta, 0.1)
     const field = racersRef.current ?? []
+    // Contact points already flashed this frame. Reset rather than
+    // reallocated, and at most one entry per car.
+    drawnThisFrame.length = 0
 
     if (enabled) {
       for (let index = 0; index < field.length; index++) {
@@ -323,9 +443,17 @@ export function RacerFx({ racersRef, enabled }: RacerFxProps): React.ReactElemen
         // A hit is counted, not sampled: the frame loop must never miss a
         // bang because it happened between two of its own ticks.
         const bumps = racer.bumpCount
-        const seen = lastBumps.current[index] ?? bumps
-        if (bumps > seen) due += BUMP_PUFF
+        const seenBumps = lastBumps.current[index] ?? bumps
+        const hitCar = bumps > seenBumps
         lastBumps.current[index] = bumps
+
+        const walls = racer.wallCount
+        const seenWalls = lastWalls.current[index] ?? walls
+        const hitWall = walls > seenWalls
+        lastWalls.current[index] = walls
+
+        if (hitCar) due += BUMP_PUFF
+        if (hitWall) due += WALL_PUFF
 
         while (smokeDebt.current[index] >= 1) {
           smokeDebt.current[index] -= 1
@@ -348,11 +476,60 @@ export function RacerFx({ racersRef, enabled }: RacerFxProps): React.ReactElemen
           )
           smoke.sizes[particle] = SMOKE_SIZE_START
         }
+
+        // --- the bang ------------------------------------------------------
+        // Drawn at the point of contact, which the simulation recorded for
+        // exactly this: a side-swipe happens at the corner of the car, and a
+        // flash at the car's centre reads as the engine going up.
+        if (hitCar || hitWall) {
+          circuit.sampleInto(racer.impactT, racer.impactLateral, contact, contactTangent)
+          // One flash per contact, not one per car. Both cars in a shunt
+          // record the *same* point, so drawing it twice puts two additive
+          // sprites in the same place and doubles the brightness of exactly
+          // the hits that already look biggest. Whoever gets there first this
+          // frame draws it; the other one still sparks.
+          const already = drawnThisFrame.includes(racer.impactT)
+          if (!already) {
+            drawnThisFrame.push(racer.impactT)
+            const flash = emit(
+              impact,
+              contact.x,
+              contact.y + IMPACT_HEIGHT,
+              contact.z,
+              0,
+              0,
+              0,
+              IMPACT_LIFE,
+            )
+            impact.sizes[flash] = IMPACT_SIZE_START
+          }
+
+          // Sparks. Thrown into the flame pool rather than a fourth of their
+          // own: they are chips of hot metal cooling on the way down, which
+          // is the flame's whole behaviour already.
+          const count = hitCar ? BUMP_SPARKS : WALL_SPARKS
+          for (let n = 0; n < count; n++) {
+            const angle = Math.random() * Math.PI * 2
+            const speed = SPARK_SPEED * (0.4 + Math.random() * 0.9)
+            const particle = emit(
+              flame,
+              contact.x,
+              contact.y + IMPACT_HEIGHT,
+              contact.z,
+              Math.cos(angle) * speed,
+              0.6 + Math.random() * 2.4,
+              Math.sin(angle) * speed,
+              SPARK_LIFE * (0.6 + Math.random() * 0.8),
+            )
+            flame.sizes[particle] = FLAME_SIZE * (0.5 + Math.random() * 0.5)
+          }
+        }
       }
     }
 
     advanceFlame(flame, dt)
     advanceSmoke(smoke, dt)
+    advanceImpacts(impact, dt)
   })
 
   return (
@@ -362,6 +539,9 @@ export function RacerFx({ racersRef, enabled }: RacerFxProps): React.ReactElemen
           sphere would cull the whole system the moment the camera moved. */}
       <points frustumCulled={false} geometry={smoke.geometry} material={smokeMaterial} />
       <points frustumCulled={false} geometry={flame.geometry} material={flameMaterial} />
+      {/* Last, so a flash sits over its own sparks and smoke rather than
+          behind them — the bang is the thing being read. */}
+      <points frustumCulled={false} geometry={impact.geometry} material={impactMaterial} />
     </>
   )
 }
@@ -395,6 +575,36 @@ function advanceFlame(pool: Pool, dt: number): void {
     pool.colors[i * 4 + 2] = blue
     // Additive already fades towards black, so the alpha only has to take the
     // last of it off rather than carry the whole fade.
+    pool.colors[i * 4 + 3] = Math.max(0, 1 - age * age)
+  }
+  commit(pool)
+}
+
+/**
+ * Impact: appears at full brightness, opens out, and is gone.
+ *
+ * No velocity and no drag — a flash does not travel, it happens at a place.
+ * The fade is deliberately front-loaded (`1 - age²` rather than `1 - age`) so
+ * the sprite is at its whitest in the frame the collision occurs and spends
+ * the rest of its life leaving, which is what makes a fifth of a second read
+ * as a bang rather than as a light being switched off.
+ */
+function advanceImpacts(pool: Pool, dt: number): void {
+  const count = pool.sizes.length
+  for (let i = 0; i < count; i++) {
+    if (pool.life[i] <= 0) {
+      pool.colors[i * 4 + 3] = 0
+      continue
+    }
+    pool.life[i] -= dt
+
+    const age = 1 - Math.max(0, pool.life[i]) / pool.maxLife[i]
+    pool.sizes[i] = IMPACT_SIZE_START + (IMPACT_SIZE_END - IMPACT_SIZE_START) * age
+    // White at the core of the moment, cooling through the same yellow the
+    // exhaust flame uses so the two effects read as one material.
+    pool.colors[i * 4] = 1
+    pool.colors[i * 4 + 1] = 1 - age * 0.35
+    pool.colors[i * 4 + 2] = Math.max(0, 0.9 - age * 1.5)
     pool.colors[i * 4 + 3] = Math.max(0, 1 - age * age)
   }
   commit(pool)

@@ -103,6 +103,10 @@ export function RaceScene({ isLive, paused = false }: RaceChannelProps): React.R
     curvatureAt: circuit.curvatureAt,
     laneOffset: circuit.laneOffset,
     roadHalfWidth: circuit.halfWidth,
+    // ...and about its own barriers. Measured off the loaded model once it
+    // mounts (see TrackModel), so until then this reports the nominal width
+    // and the field races as it always did.
+    corridorAt: circuit.corridorInto,
   })
 
   // The HUD is React and must not re-render at frame rate, so it samples the

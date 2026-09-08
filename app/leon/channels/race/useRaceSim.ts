@@ -1,6 +1,7 @@
 'use client'
 
 import { useCallback, useEffect, useRef } from 'react'
+import type { CorridorSample } from './circuit'
 import type { RacerState } from './types'
 
 // The whole game. Deliberately one file, because the rules are the interesting
@@ -83,6 +84,39 @@ const STEER_SMOOTHING = 0.14
 const EDGE_MARGIN = 1.2
 
 // ---------------------------------------------------------------------------
+// The barrier
+//
+// The edge of the road used to be one number for the whole lap, and the whole
+// lap is not one width. Where the real road pinched — a bridge, a gate, a
+// hairpin whose apex the traced line clips — a car held to the nominal width
+// was held somewhere there was no road, and it drove through the guardrail
+// with nothing in the simulation to say otherwise. So the circuit measures
+// the gap between the barriers (see barrierField.ts) and the simulation
+// clamps into *that*, per point on the lap.
+//
+// A wall is not a collision solver either. A car that reaches the limit stops
+// going sideways, loses some pace, and gets a bang — the same bumper-car
+// vocabulary as a car-to-car hit, because to a spectator it is the same
+// event.
+// ---------------------------------------------------------------------------
+
+/**
+ * Sideways speed above which touching a wall counts as hitting it.
+ *
+ * A car leaning on the barrier through a long corner is not crashing, and
+ * spraying sparks the whole way round would spend the effect entirely.
+ */
+const WALL_IMPACT_SPEED = 2.2
+/** Fraction of its outward speed a car keeps, bounced back off a wall. */
+const WALL_BOUNCE = 0.35
+/** Pace a car drops to when it hits a wall, as a fraction of its target. */
+const WALL_SPEED_FLOOR = 0.62
+/** Yaw kick from a wall, radians. Half a shunt: the wall gives nothing back. */
+const WALL_YAW = 0.26
+/** Seconds before the same car can bang the wall again. */
+const WALL_COOLDOWN = 0.5
+
+// ---------------------------------------------------------------------------
 // Contact
 //
 // Bumper cars, not a collision solver. Two cars overlapping exchange a
@@ -159,6 +193,22 @@ export interface SimRacer {
    * a hit with no bang.
    */
   bumpCount: number
+  /**
+   * Increments once per barrier strike. Counted separately from `bumpCount`
+   * so the effects layer can tell a shunt from a scrape — they throw
+   * different things off the car — while reading both the same way.
+   */
+  wallCount: number
+  /** Seconds before this car can strike a wall again. */
+  wallCooldown: number
+  /**
+   * Where the last impact happened, in track space: distance around the lap
+   * and distance across it. The bang is drawn at the point of contact rather
+   * than at the car's centre, which for a side-swipe is a metre and a half
+   * away and reads, wrongly, as an explosion coming from inside the car.
+   */
+  impactT: number
+  impactLateral: number
   /** Seconds since this kart last crossed the line. The running lap. */
   lapClock: number
   /** Seconds since it joined the grid. The running total. */
@@ -210,6 +260,14 @@ interface UseRaceSimOptions {
   readonly laneOffset?: (laneIndex: number) => number
   /** Distance from the centreline to the kerb. Bounds the slide. */
   readonly roadHalfWidth?: number
+  /**
+   * The measured gap between the barriers at a point on the lap, written into
+   * the sample handed in. Optional for the same reason `curvatureAt` is: a
+   * circuit that has not measured itself yet — the procedural oval, or a
+   * model still loading — races on its nominal width, as everything did
+   * before there was anything better to race on.
+   */
+  readonly corridorAt?: (t: number, out: CorridorSample) => void
 }
 
 export interface RaceSim {
@@ -229,14 +287,17 @@ export function useRaceSim({
   curvatureAt,
   laneOffset,
   roadHalfWidth = 7.4,
+  corridorAt,
 }: UseRaceSimOptions): RaceSim {
   const state = useRef<SimRacer[]>([])
 
   // The frame loop reads these through a ref rather than closing over them.
   // `step` is handed to useFrame once; rebuilding it because the circuit
   // changed identity would leave the scene calling last render's copy.
-  const track = useRef({ curvatureAt, laneOffset, roadHalfWidth })
-  track.current = { curvatureAt, laneOffset, roadHalfWidth }
+  const track = useRef({ curvatureAt, laneOffset, roadHalfWidth, corridorAt })
+  track.current = { curvatureAt, laneOffset, roadHalfWidth, corridorAt }
+  /** One sample, reused: this is read once per car per frame. */
+  const corridor = useRef<CorridorSample>({ centre: 0, halfWidth: roadHalfWidth })
 
   useEffect(() => {
     if (!racers) return
@@ -289,6 +350,10 @@ export function useRaceSim({
         speedScale: 1,
         bumpCooldown: 0,
         bumpCount: 0,
+        wallCount: 0,
+        wallCooldown: 0,
+        impactT: 0,
+        impactLateral: 0,
         lapClock: 0,
         totalClock: 0,
         lapTimes: [],
@@ -302,14 +367,39 @@ export function useRaceSim({
       // every kart several laps forward in a single frame.
       const dt = Math.min(delta, 0.1)
       const field = state.current
-      const { curvatureAt: curvature, roadHalfWidth: halfWidth } = track.current
-      const edge = Math.max(0, halfWidth - EDGE_MARGIN)
+      const {
+        curvatureAt: curvature,
+        roadHalfWidth: halfWidth,
+        corridorAt: measureCorridor,
+      } = track.current
+      const nominalEdge = Math.max(0, halfWidth - EDGE_MARGIN)
+      const sample = corridor.current
 
       for (const racer of field) {
+        // --- where the road actually is -----------------------------------
+        // Asked per car rather than per frame: the field is strung out over a
+        // lap, and the car in the hairpin has a different road from the one
+        // on the straight.
+        if (measureCorridor) {
+          measureCorridor(racer.t, sample)
+        } else {
+          sample.centre = 0
+          sample.halfWidth = halfWidth
+        }
+        const roadCentre = sample.centre
+        const edge = Math.max(0.2, Math.min(sample.halfWidth, halfWidth) - EDGE_MARGIN)
+        // Lanes are squeezed into whatever width there is rather than held at
+        // their nominal spacing. Eight cars abreast on a road that has
+        // narrowed to a bridge is eight cars in the barrier; the same eight
+        // proportionally closer together is a pack going through a gap.
+        const laneScale = nominalEdge > 0 ? Math.min(1, edge / nominalEdge) : 0
+        const home = roadCentre + racer.homeLateral * laneScale
+
         // --- pace, and getting it back after a shunt ---------------------
         const recovery = 1 - Math.exp(-dt / BUMP_RECOVERY)
         racer.speedScale += (1 - racer.speedScale) * recovery
         racer.bumpCooldown = Math.max(0, racer.bumpCooldown - dt)
+        racer.wallCooldown = Math.max(0, racer.wallCooldown - dt)
 
         const blend = 1 - Math.exp(-dt / SPEED_SMOOTHING)
         racer.speed += (racer.targetSpeed * racer.speedScale - racer.speed) * blend
@@ -331,19 +421,31 @@ export function useRaceSim({
         racer.lateralVelocity -= slip * SLIDE_ACCEL * dt
         // And pulled back to its own lane, damped so it settles rather than
         // weaving down the following straight.
-        racer.lateralVelocity += (racer.homeLateral - racer.lateral) * LANE_SPRING * dt
+        racer.lateralVelocity += (home - racer.lateral) * LANE_SPRING * dt
         racer.lateralVelocity -= racer.lateralVelocity * Math.min(1, LANE_DAMPING * dt)
         racer.lateral += racer.lateralVelocity * dt
 
-        if (racer.lateral > edge) {
-          racer.lateral = edge
-          // Killed rather than reflected: a car that pings off an invisible
-          // wall looks like a bug, whereas one that scrubs along the kerb and
-          // gathers itself looks like a driver who ran wide.
-          racer.lateralVelocity = Math.min(0, racer.lateralVelocity)
-        } else if (racer.lateral < -edge) {
-          racer.lateral = -edge
-          racer.lateralVelocity = Math.max(0, racer.lateralVelocity)
+        // The barrier. Measured off the model, so the limit is the rail that
+        // is actually drawn there rather than a nominal width the road may
+        // never have had.
+        const offset = racer.lateral - roadCentre
+        if (Math.abs(offset) > edge) {
+          const side = Math.sign(offset)
+          racer.lateral = roadCentre + side * edge
+          const closing = racer.lateralVelocity * side
+          if (closing > 0) {
+            // Mostly killed, slightly returned. Fully reflected reads as a
+            // pinball; fully killed reads as a car glued to the wall.
+            racer.lateralVelocity = -racer.lateralVelocity * WALL_BOUNCE
+            if (closing > WALL_IMPACT_SPEED && racer.wallCooldown === 0) {
+              racer.speedScale = Math.min(racer.speedScale, WALL_SPEED_FLOOR)
+              racer.bumpYaw -= side * WALL_YAW
+              racer.wallCooldown = WALL_COOLDOWN
+              racer.wallCount += 1
+              racer.impactT = racer.t
+              racer.impactLateral = racer.lateral
+            }
+          }
         }
 
         // Opposite lock. The nose points towards the inside of the corner
@@ -438,6 +540,17 @@ function resolveContacts(field: ReadonlyArray<SimRacer>, trackLength: number): v
       b.bumpCooldown = BUMP_COOLDOWN
       a.bumpCount += 1
       b.bumpCount += 1
+
+      // Where the panels actually met: half way between the two cars, both
+      // around the lap and across it. Recorded on both, because both are
+      // going to draw it and the bang has to come from one place — two cars
+      // each flashing at their own centre is two crashes, not one.
+      const contactT = (b.t + gap / 2 + 1) % 1
+      const contactLateral = (a.lateral + b.lateral) / 2
+      a.impactT = contactT
+      b.impactT = contactT
+      a.impactLateral = contactLateral
+      b.impactLateral = contactLateral
     }
   }
 }
