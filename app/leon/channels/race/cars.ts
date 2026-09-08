@@ -28,12 +28,19 @@ export function carModelFor(index: number): CarModel {
 
 /** The shared wheel and the ground-blob shadow, from the same pack. */
 export const WHEEL_MODEL = { objUrl: '/ps1/cars/wheel.obj', textureUrl: '/ps1/cars/wheel.png' } as const
-// The pack's car_shadow.png, verbatim — a solid black rounded blob with the
-// alpha already in the file. (Its sibling car_shadow_alpha.png is an INVERSE
+// The ground blob, generated rather than shipped — see
+// scripts/makeShadowBlob.mjs.
+//
+// The pack's own car_shadow.png is a hard binary mask that is fully opaque
+// across the whole middle of the page, so every car sat on a black slab with
+// a stepped rectangular edge. (Its sibling car_shadow_alpha.png is an INVERSE
 // mask — white marks the shadow — which is how an earlier build ended up
-// drawing a white card under every car. New filename, so no cache can ever
-// serve that version again.)
-export const SHADOW_TEXTURE_URL = '/ps1/cars/shadow-blob.png'
+// drawing a white card under every car.) The replacement is an ellipse held
+// as three flat steps of low opacity, blended rather than cut out: the
+// console spent its hardware semi-transparency on exactly this, and the era's
+// racers all show the tarmac's own texture reading straight through the
+// shadow. See scripts/makeShadowBlob.mjs for the steps and why they are hard.
+export const SHADOW_TEXTURE_URL = '/ps1/cars/shadow-stepped.png'
 
 /**
  * A livery: one of the pack's own painted texture pages, plus the colour that

@@ -4,6 +4,7 @@ import { useCallback, useMemo, useRef } from 'react'
 import { useFrame, useThree } from '@react-three/fiber'
 import * as THREE from 'three'
 import { useCircuit } from './CircuitContext'
+import type { Circuit } from './circuit'
 import {
   useCameraInput,
   stepFreeRoam,
@@ -13,6 +14,7 @@ import {
   FREE_IDLE_RETURN_S,
   type CameraControlState,
 } from './cameraControls'
+import { resolveCameraCollision } from './cameraCollision'
 import type { SimRacer } from './useRaceSim'
 
 // A racing-game replay director. The rule borrowed from the era: cameras CUT,
@@ -45,6 +47,10 @@ const ONBOARD_HEIGHT = 1.95
 const ONBOARD_LOOK_AHEAD = 9
 /** Onboard tracks tightly — a laggy POV feels like a drone, not a driver. */
 const ONBOARD_SMOOTHING = 9
+
+/** The establishing shot's height and standoff, as fractions of the lap. */
+const HIGH_SHOT_RISE = 0.62
+const HIGH_SHOT_BACK = 0.62
 
 const BASE_FOV = 68
 const ONBOARD_FOV_MIN = 70
@@ -134,6 +140,8 @@ export function CameraDirector({
   const lastSubjectKey = useRef<string | null>(null)
   /** 1 = settled. Below 1 the camera is flying into a newly latched car. */
   const latch = useRef(1)
+  /** Set on a cut: the next frame places the camera outright, without easing. */
+  const cutting = useRef(true)
 
   useCameraInput(controlsRef, enabled, onInteract)
 
@@ -179,6 +187,7 @@ export function CameraDirector({
         releaseToAuto(controls)
         // Coming back to the broadcast is a cut, like any other shot change.
         elapsed.current = 0
+        cutting.current = true
       }
     }
 
@@ -189,7 +198,7 @@ export function CameraDirector({
     )
 
     if (controls.mode === 'free') {
-      driveFreeRoam(camera, controls, scratch, delta)
+      driveFreeRoam(camera, controls, circuit, scratch, delta)
       report('free', null)
       easeFov(camera, BASE_FOV, delta)
       return
@@ -250,6 +259,12 @@ export function CameraDirector({
         ONBOARD_FOV_MIN + speedRatio * proximity * (ONBOARD_FOV_MAX - ONBOARD_FOV_MIN),
         delta,
       )
+      // Only once the latch has landed: interrupting the flight-in with a
+      // collision correction turns a camera move into a stutter, and the
+      // arrival position is itself resolved, so the flight ends somewhere legal.
+      if (latch.current >= 1) {
+        resolveCameraCollision(circuit, camera.position, delta)
+      }
       camera.lookAt(scratch.lookAt)
       return
     }
@@ -263,8 +278,16 @@ export function CameraDirector({
       // Advance the POV subject as we leave an onboard shot, so consecutive
       // POVs are different people rather than the same kart twice.
       if (shot === 'onboard') povCursor.current += 1
-      // The cut: snap the camera to the new shot with no interpolation.
-      camera.position.set(0, 0, 0)
+      // The cut: the next frame places the camera outright rather than easing
+      // into the new shot.
+      //
+      // It used to park the camera at the world origin for this one frame to
+      // defeat the easing, which on the flat oval was a frame of sky. On an
+      // imported circuit the origin is inside the terrain, and the frame it
+      // rendered from in there was the whole world seen from underneath with
+      // its single-sided surfaces facing away — the missing-floor picture. A
+      // flag does the same job and never puts the lens anywhere.
+      cutting.current = true
       return
     }
 
@@ -291,7 +314,7 @@ export function CameraDirector({
         .copy(scratch.target)
         .addScaledVector(scratch.tangent, -ONBOARD_DISTANCE)
         .setY(scratch.target.y + ONBOARD_HEIGHT)
-      const blend = 1 - Math.exp(-delta * ONBOARD_SMOOTHING)
+      const blend = cutting.current ? 1 : 1 - Math.exp(-delta * ONBOARD_SMOOTHING)
       camera.position.lerp(scratch.desired, blend)
       // Look well down the road rather than at the kart: the horizon rushing
       // toward you is the speed cue, the kart itself barely moves in frame.
@@ -307,7 +330,7 @@ export function CameraDirector({
         .copy(scratch.target)
         .addScaledVector(scratch.tangent, -CHASE_DISTANCE)
         .setY(scratch.target.y + CHASE_HEIGHT)
-      const blend = 1 - Math.exp(-delta * CHASE_SMOOTHING)
+      const blend = cutting.current ? 1 : 1 - Math.exp(-delta * CHASE_SMOOTHING)
       camera.position.lerp(scratch.desired, blend)
       scratch.lookAt.copy(scratch.target).addScaledVector(scratch.tangent, 6)
     } else if (shot === 'trackside') {
@@ -326,10 +349,34 @@ export function CameraDirector({
     } else {
       // High wide: the whole circuit, so the room can read the shape of the
       // day. Framed off the circuit's own radius rather than a fixed height,
-      // or a large track is shot from inside its own infield.
-      camera.position.set(0, circuit.radius * 1.5, circuit.radius * 1.15)
-      scratch.lookAt.set(0, 0, 0)
+      // or a large track is shot from inside its own infield — and aimed at
+      // the middle of the LAP rather than the middle of the world, which on
+      // an imported circuit are different places. Pointed at the origin, this
+      // shot spent its ten seconds looking at the backdrop while the race
+      // happened off to the left.
+      // Kept under the rip's own backdrop. A downloaded circuit is modelled
+      // inside a bowl of painted scenery a kilometre high, and the classic
+      // establishing height — one and a half times the lap's radius — puts
+      // the camera outside it, filming the back of a mountain while the race
+      // happens on the other side. Two thirds of the radius stays inside the
+      // bowl, which costs the full lap in frame and buys a shot of the
+      // circuit rather than of its wallpaper.
+      camera.position.set(
+        circuit.centre.x,
+        circuit.centre.y + circuit.radius * HIGH_SHOT_RISE,
+        circuit.centre.z + circuit.radius * HIGH_SHOT_BACK,
+      )
+      scratch.lookAt.copy(circuit.centre)
     }
+
+    cutting.current = false
+
+    // Trackside and the high wide place the camera outright rather than
+    // easing towards it, so their correction has to land in the same frame —
+    // see `instant`.
+    resolveCameraCollision(circuit, camera.position, delta, {
+      instant: shot === 'trackside' || shot === 'high',
+    })
 
     easeFov(camera, targetFov, delta)
     camera.lookAt(scratch.lookAt)
@@ -351,6 +398,7 @@ interface DirectorScratch {
 function driveFreeRoam(
   camera: THREE.Camera,
   controls: CameraControlState,
+  circuit: Circuit,
   scratch: DirectorScratch,
   delta: number,
 ): void {
@@ -362,7 +410,7 @@ function driveFreeRoam(
     controls.freePitch = Math.asin(THREE.MathUtils.clamp(scratch.forward.y, -1, 1))
   }
 
-  stepFreeRoam(controls, Math.min(delta, 0.1))
+  stepFreeRoam(controls, circuit, Math.min(delta, 0.1))
   camera.position.copy(controls.freePosition)
   freeForward(controls, scratch.forward)
   scratch.lookAt.copy(camera.position).add(scratch.forward)

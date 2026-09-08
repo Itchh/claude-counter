@@ -17,10 +17,10 @@ import {
 import { Timeline } from '../Timeline'
 import { Ticker } from '../Ticker'
 import { Toasts } from '../Toasts'
-import { GT, PS1, FONTS, toPowerStats, type PowerStats } from '../ps1/theme'
+import { ARCADE, PS1, FONTS, toPowerStats, type PowerStats } from '../ps1/theme'
 import { SCALED_SURFACE } from '../ps1/hudScale'
-import { useNavItem } from '../ps1/navigation'
-import { Ps1Avatar } from '../ps1/Ps1Avatar'
+import { ROW_PREFIX, useNavItem } from '../ps1/navigation'
+import { Ps1Car } from '../ps1/Ps1Car'
 import { RaceStrip } from '../ps1/RaceStrip'
 import type { ChannelProps } from './ChannelRegistry'
 
@@ -54,28 +54,23 @@ function useClockTime(active: boolean): string {
   return time
 }
 
+/**
+ * A player's colour, for the gauge and nothing else.
+ *
+ * The kit gives every screen the same four registers — red labels, white
+ * values, amber for anything live, chrome for a position — and a name
+ * printed in the player's own magenta belongs to none of them. So the colour
+ * survives exactly where it is doing work: inside the bar, where five of
+ * them next to each other are the comparison the screen exists to make.
+ */
 function fallbackColor(rank: number): string {
   if (rank === 1) return PS1.hot
   if (rank <= 3) return PS1.cyan
   return '#7a7a9e'
 }
 
-function rankColor(rank: number, userColor: string | null): string {
+function gaugeColor(rank: number, userColor: string | null): string {
   return userColor ?? fallbackColor(rank)
-}
-
-function tokenColor(rank: number, userColor: string | null): string {
-  if (userColor) return userColor
-  if (rank === 1) return PS1.hot
-  if (rank <= 3) return '#00d4e0'
-  return '#5e5e7e'
-}
-
-function barTrackColor(rank: number, userColor: string | null): string {
-  if (userColor) return `${userColor}1f`
-  if (rank === 1) return 'rgba(255, 45, 149, 0.12)'
-  if (rank <= 3) return 'rgba(0, 240, 255, 0.08)'
-  return 'rgba(42, 42, 74, 0.3)'
 }
 
 function darkenHex(hex: string, amount: number): string {
@@ -86,7 +81,7 @@ function darkenHex(hex: string, amount: number): string {
 }
 
 function barGradient(rank: number, userColor: string | null): string {
-  const base = userColor ?? fallbackColor(rank)
+  const base = gaugeColor(rank, userColor)
   const dark = darkenHex(base, 40)
   return `repeating-linear-gradient(90deg, ${base} 0px, ${base} 4px, ${dark} 4px, ${dark} 6px)`
 }
@@ -98,18 +93,6 @@ function barGradient(rank: number, userColor: string | null): string {
 function segmentGradient(color: string): string {
   const dark = darkenHex(color, 40)
   return `repeating-linear-gradient(90deg, ${color} 0px, ${color} 4px, ${dark} 4px, ${dark} 6px)`
-}
-
-function barShadow(rank: number, userColor: string | null): string {
-  if (userColor) return `0 0 8px ${userColor}60, 0 0 16px ${userColor}30`
-  if (rank === 1) return '0 0 8px #ff2d9560, 0 0 16px #ff2d9530'
-  if (rank <= 3) return '0 0 6px rgba(0, 240, 255, 0.2)'
-  return 'none'
-}
-
-function glowShadow(rank: number, userColor: string | null): string {
-  const c = userColor ?? (rank === 1 ? PS1.hot : PS1.cyan)
-  return `0 0 8px ${c}66`
 }
 
 function AnimatedTokens({ value, formatter }: { value: number; formatter: (n: number) => string }): React.ReactElement {
@@ -129,15 +112,21 @@ function AnimatedTokens({ value, formatter }: { value: number; formatter: (n: nu
   return <>{text}</>
 }
 
-/** LV / PWR / SPD readout, the character-select stat block. */
+/**
+ * A label/value pair, the kit's most-used component.
+ *
+ * Red caps, white numeral, and amber when the value is live — which is the
+ * kit's only rule about colour and the reason the eye can find the one
+ * moving number on a board of twenty.
+ */
 function StatPlate({
   label,
   value,
-  color,
+  live = false,
 }: {
-  label: string
-  value: string
-  color: string
+  readonly label: string
+  readonly value: string
+  readonly live?: boolean
 }): React.ReactElement {
   return (
     <span
@@ -146,17 +135,15 @@ function StatPlate({
         flexDirection: 'column',
         alignItems: 'flex-start',
         lineHeight: 1,
-        gap: '2px',
+        gap: '3px',
       }}
     >
-      <span
-        className="gt-label"
-        style={{ fontSize: 'clamp(7px, 0.8vw, 10px)', color: GT.label }}
-      >
+      <span className="arc-label" style={{ fontSize: 'clamp(7px, 0.8vw, 10px)' }}>
         {label}
       </span>
       <span
-        style={{ fontSize: 'clamp(10px, 1.2vw, 15px)', fontVariantNumeric: 'tabular-nums', color }}
+        className={live ? 'arc-value-live' : 'arc-value'}
+        style={{ fontSize: 'clamp(10px, 1.2vw, 15px)' }}
       >
         {value}
       </span>
@@ -165,25 +152,22 @@ function StatPlate({
 }
 
 const STYLES = `
+  /* A rank change. Was a coloured wash; the kit has no wash, so the row
+     inverts for a beat instead — a palette swap, which is what the hardware
+     could actually afford. */
   @keyframes flashUp {
-    0% { background: rgba(0, 255, 136, 0.3); }
+    0% { background: #143a14; }
     100% { background: transparent; }
   }
   @keyframes flashDown {
-    0% { background: rgba(255, 50, 50, 0.3); }
+    0% { background: #3a1414; }
     100% { background: transparent; }
   }
-  @keyframes blink {
-    0%, 100% { opacity: 1; }
-    50% { opacity: 0; }
-  }
-  @keyframes namePulse {
-    0%, 100% {
-      text-shadow: 0 0 10px var(--uc, #ff2d95), 0 0 30px color-mix(in srgb, var(--uc, #ff2d95) 50%, transparent);
-    }
-    50% {
-      text-shadow: 0 0 20px var(--uc, #ff2d95), 0 0 50px color-mix(in srgb, var(--uc, #ff2d95) 67%, transparent);
-    }
+  /* One frame on, one frame off. A fade would be a blend the console could
+     not do, and reads as a pulse rather than as a cursor. */
+  @keyframes arcBlink {
+    0%, 49% { opacity: 1; }
+    50%, 100% { opacity: 0; }
   }
   @keyframes glitch {
     0%, 90%, 100% { transform: translate(0); filter: none; }
@@ -197,19 +181,15 @@ const STYLES = `
     98% { opacity: 0.97; }
     99% { opacity: 0.99; }
   }
-  @keyframes barGlow {
-    0%, 100% { filter: brightness(1); }
-    50% { filter: brightness(1.3); }
-  }
-  .flash-up { animation: flashUp 0.8s ease-out; }
-  .flash-down { animation: flashDown 0.8s ease-out; }
+  .flash-up { animation: flashUp 0.8s steps(2, end); }
+  .flash-down { animation: flashDown 0.8s steps(2, end); }
 
   .bar-block {
-    height: clamp(9px, 1vw, 13px);
+    height: clamp(11px, 1.2vw, 16px);
     image-rendering: pixelated;
   }
   .bar-track {
-    height: clamp(9px, 1vw, 13px);
+    height: clamp(11px, 1.2vw, 16px);
     position: relative;
     overflow: hidden;
   }
@@ -217,34 +197,32 @@ const STYLES = `
   .bar-segment {
     height: 100%;
     /* Hairline gap so touching segments stay legible without a border box. */
-    box-shadow: inset -1px 0 0 rgba(8, 8, 15, 0.85);
+    box-shadow: inset -1px 0 0 #000;
   }
   .bar-segment:last-child {
     box-shadow: none;
   }
+  /* Legend swatch: the same fill as the bar it explains, in the same black
+     frame, so the key is unmistakably a sample of the thing. */
   .legend-swatch {
     display: inline-block;
     width: clamp(14px, 1.6vw, 22px);
     height: clamp(7px, 0.8vw, 10px);
     image-rendering: pixelated;
+    box-shadow: 0 0 0 2px #000;
   }
 
-  .rank-1-bar {
-    animation: barGlow 2s ease-in-out infinite;
-  }
-
-  .online-dot {
+  /* Online lamp. A square, not a dot with a halo: the kit's warning lamps
+     are lit and unlit cells of the same shape, and the unlit one still has
+     to be visible or the row loses a column when someone logs off. */
+  .arc-lamp {
     display: inline-block;
-    width: clamp(6px, 0.7vw, 9px);
-    height: clamp(6px, 0.7vw, 9px);
+    width: clamp(8px, 0.9vw, 12px);
+    height: clamp(8px, 0.9vw, 12px);
+    box-shadow: 0 0 0 2px #000;
   }
-  .online-dot-active {
-    background: #00ff88;
-    box-shadow: 0 0 6px #00ff88, 0 0 12px #00ff8866;
-  }
-  .online-dot-inactive {
-    background: #2a2a4a;
-  }
+  .arc-lamp-on { background: #4cff3c; }
+  .arc-lamp-off { background: #123a10; }
 `
 
 export function StandingsChannel({ isLive }: ChannelProps): React.ReactElement {
@@ -323,8 +301,8 @@ export function StandingsChannel({ isLive }: ChannelProps): React.ReactElement {
           ? 'screenShake 0.6s ease-in-out'
           : 'screenFlicker 4s infinite',
         fontFamily: FONTS.hud,
-        background: PS1.void,
-        color: PS1.text,
+        background: ARCADE.ground,
+        color: ARCADE.value,
         display: 'grid',
         gridTemplateRows: 'auto 1fr auto auto auto',
         overflow: 'hidden',
@@ -341,17 +319,22 @@ export function StandingsChannel({ isLive }: ChannelProps): React.ReactElement {
         {fanfareColor && (
           <motion.div
             key="fanfare-burst"
-            initial={{ opacity: 0.9, scale: 0 }}
-            animate={{ opacity: 0, scale: 3 }}
+            // A new leader used to bloom a coloured halo across the screen.
+            // The kit has no bloom, so it flashes instead: two hard frames of
+            // the leader's own colour over the board, stepped rather than
+            // faded, which is what a palette-swap celebration actually looked
+            // like on this hardware.
+            initial={{ opacity: 0.35 }}
+            animate={{ opacity: 0 }}
             exit={{ opacity: 0 }}
-            transition={{ duration: FANFARE_DURATION / 1000, ease: 'easeOut' }}
+            transition={{ duration: FANFARE_DURATION / 1000, ease: 'linear' }}
             style={{
               position: 'fixed',
               inset: 0,
               zIndex: 99,
               pointerEvents: 'none',
-              transformOrigin: 'center',
-              background: `radial-gradient(circle at center, ${fanfareColor}66 0%, ${fanfareColor}22 30%, transparent 60%)`,
+              background: fanfareColor,
+              mixBlendMode: 'screen',
             }}
           />
         )}
@@ -362,7 +345,7 @@ export function StandingsChannel({ isLive }: ChannelProps): React.ReactElement {
         initial={{ opacity: 0, y: -10 }}
         animate={{ opacity: 1, y: 0 }}
         transition={{ duration: 0.5 }}
-        className="gt-bar-top"
+        className="arc-header"
         style={{
           position: 'relative',
           zIndex: 2,
@@ -374,12 +357,13 @@ export function StandingsChannel({ isLive }: ChannelProps): React.ReactElement {
         }}
       >
         <div style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
+          {/* The board's own title, in the kit's display treatment: white,
+              outlined on all four sides, dropped four pixels. */}
           <span
-            className="gt-label ps1-warp"
+            className="arc-label-plain ps1-warp"
             style={{
               fontFamily: FONTS.codec,
-              fontSize: 'clamp(11px, 1.3vw, 16px)',
-              color: GT.label,
+              fontSize: 'clamp(13px, 1.6vw, 20px)',
               animation: 'glitch 8s infinite',
             }}
           >
@@ -388,17 +372,10 @@ export function StandingsChannel({ isLive }: ChannelProps): React.ReactElement {
         </div>
         {/* The clock is an instrument, so it is drawn as one. */}
         <span className="gt-stack" style={{ alignItems: 'flex-end' }}>
-          <span className="gt-label" style={{ fontSize: '11px', color: GT.label }}>
+          <span className="arc-label" style={{ fontSize: '11px' }}>
             Session clock
           </span>
-          <span
-            style={{
-              fontSize: 'clamp(12px, 1.4vw, 17px)',
-              color: GT.value,
-              fontVariantNumeric: 'tabular-nums',
-              textShadow: '1px 1px 0 rgba(0,0,0,0.9)',
-            }}
-          >
+          <span className="arc-value-live" style={{ fontSize: 'clamp(12px, 1.4vw, 17px)' }}>
             {clock}
           </span>
         </span>
@@ -425,15 +402,13 @@ export function StandingsChannel({ isLive }: ChannelProps): React.ReactElement {
               initial={{ opacity: 0 }}
               animate={{ opacity: 1 }}
               exit={{ opacity: 0 }}
-              className="ps1-plate"
+              className="arc-label-lg"
               style={{
                 textAlign: 'center',
                 fontSize: 'clamp(14px, 2vw, 24px)',
-                color: PS1.hot,
-                textShadow: `0 0 20px ${PS1.hot}80`,
               }}
             >
-              <span style={{ animation: 'blink 1.2s step-end infinite' }}>_</span>{' '}
+              <span style={{ animation: 'arcBlink 1.2s steps(1, end) infinite' }}>_</span>{' '}
               Insert player one
             </motion.div>
           ) : (
@@ -460,14 +435,13 @@ export function StandingsChannel({ isLive }: ChannelProps): React.ReactElement {
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
             transition={{ duration: 0.4, delay: 0.3 }}
-            className="ps1-plate"
+            className="arc-caption"
             style={{
               display: 'flex',
               alignItems: 'center',
               justifyContent: 'center',
               flexWrap: 'wrap',
               gap: 'clamp(12px, 2vw, 28px)',
-              color: PS1.textFaint,
               fontSize: 'clamp(8px, 0.9vw, 11px)',
             }}
           >
@@ -501,7 +475,7 @@ export function StandingsChannel({ isLive }: ChannelProps): React.ReactElement {
         initial={{ opacity: 0 }}
         animate={{ opacity: 1 }}
         transition={{ duration: 0.5, delay: 0.4 }}
-        className="gt-bar"
+        className="arc-footer"
         style={{
           position: 'relative',
           zIndex: 2,
@@ -515,51 +489,44 @@ export function StandingsChannel({ isLive }: ChannelProps): React.ReactElement {
             a white value, which is the only pattern the console bar knows —
             and it is what lets the eye find the pot without reading. */}
         <span className="gt-stack">
-          <span className="gt-label" style={{ fontSize: '12px', color: GT.label }}>
+          <span className="arc-label" style={{ fontSize: '12px' }}>
             Pot
           </span>
-          <span
-            style={{
-              fontSize: 'clamp(13px, 1.5vw, 19px)',
-              color: GT.value,
-              fontVariantNumeric: 'tabular-nums',
-              textShadow: '1px 1px 0 rgba(0,0,0,0.9)',
-            }}
-          >
+          <span className="arc-value-live" style={{ fontSize: 'clamp(13px, 1.5vw, 19px)' }}>
             <AnimatedTokens value={data?.totalTokens ?? 0} formatter={fmtTokens} />
           </span>
         </span>
 
         <span className="gt-stack" style={{ alignItems: 'center' }}>
-          <span className="gt-label" style={{ fontSize: '12px', color: GT.label }}>
+          <span className="arc-label" style={{ fontSize: '12px' }}>
             Link
           </span>
+          {/* The one green readout on the board — the kit's telemetry
+              register, reserved for whether the thing is actually running. */}
           <span
-            className="gt-label"
-            style={{ fontSize: 'clamp(11px, 1.2vw, 15px)', color: data ? PS1.green : GT.valueDim }}
+            className={data ? 'arc-telemetry' : 'arc-meta'}
+            style={{ fontSize: 'clamp(11px, 1.2vw, 15px)' }}
           >
             {!data ? (
               'Linking…'
             ) : (
               <>
-                <span style={{ animation: 'blink 1.2s step-end infinite' }}>_</span> Syncing live
+                <span style={{ animation: 'arcBlink 1.2s steps(1, end) infinite' }}>_</span> Syncing
+                live
               </>
             )}
           </span>
         </span>
 
         <span className="gt-stack" style={{ alignItems: 'flex-end' }}>
-          <span className="gt-label" style={{ fontSize: '12px', color: GT.label }}>
+          <span className="arc-label" style={{ fontSize: '12px' }}>
             Saved
           </span>
           <motion.span
-            animate={{ color: justRefreshed ? PS1.hot : GT.value }}
+            className="arc-value"
+            animate={{ color: justRefreshed ? ARCADE.amber : ARCADE.value }}
             transition={{ duration: 0.5 }}
-            style={{
-              fontSize: 'clamp(13px, 1.5vw, 19px)',
-              fontVariantNumeric: 'tabular-nums',
-              textShadow: '1px 1px 0 rgba(0,0,0,0.9)',
-            }}
+            style={{ fontSize: 'clamp(13px, 1.5vw, 19px)' }}
           >
             {data ? fmtTime(data.updatedAt) : '--:--:--'}
           </motion.span>
@@ -594,14 +561,15 @@ function StandingRow({
 }): React.ReactElement {
   const key = entry.name.toLowerCase()
   const i = index
-  const nav = useNavItem(`row:${key}`)
+  // The prefix is what the number keys count — see ROW_PREFIX.
+  const nav = useNavItem(`${ROW_PREFIX}${key}`)
 
   const ratio = entry.totalTokens / maxTokens
   const segments = toModelSegments(entry.tokensByModel)
   const isFirst = entry.rank === 1
   const isHot = burnRate >= HOT_TOKENS_PER_MIN
   const stats = toPowerStats(entry.totalTokens, burnRate)
-  const accent = rankColor(entry.rank, entry.color)
+  const gauge = gaugeColor(entry.rank, entry.color)
 
   return (
                 <motion.div
@@ -619,10 +587,10 @@ function StandingRow({
                   }}
                   whileHover={{ scale: 1.005, transition: { duration: 0.15 } }}
                   className={[
-                    'gt-row',
+                    'arc-panel',
                     'relative',
                     'ps1-cursor',
-                    nav.isFocused ? 'ps1-cursor-on' : '',
+                    nav.isFocused ? 'arc-row-on' : '',
                     flash === 'up' ? 'flash-up' : flash === 'down' ? 'flash-down' : '',
                   ]
                     .filter(Boolean)
@@ -646,7 +614,7 @@ function StandingRow({
                   >
                   {/* CHARACTER PORTRAIT */}
                   <div
-                    className="gt-inset"
+                    className="arc-inset"
                     style={{
                       position: 'relative',
                       flex: '0 0 auto',
@@ -654,25 +622,31 @@ function StandingRow({
                       lineHeight: 0,
                     }}
                   >
-                    <Ps1Avatar
-                      color={accent}
+                    {/* Their car, not their face. This is a racing channel:
+                        the row's job is to say who is winning and what they
+                        are driving, and five near-identical busts said
+                        neither. The variant follows their place, which is
+                        how the race hands cars out too — see carModelFor. */}
+                    <Ps1Car
+                      color={gauge}
                       size={48}
+                      variant={index}
                       label={entry.name}
                       intensity={Math.min(1, burnRate / INTENSITY_CEILING_TOKENS_PER_MIN)}
                     />
                     <span
-                      className="ps1-plate"
+                      className="arc-caption"
                       style={{
                         position: 'absolute',
                         bottom: 0,
                         left: 0,
                         right: 0,
                         textAlign: 'center',
-                        fontSize: '8px',
+                        fontSize: '9px',
                         lineHeight: 1.4,
                         fontVariantNumeric: 'tabular-nums',
-                        background: '#04040a',
-                        color: GT.label,
+                        background: ARCADE.groundDeep,
+                        textShadow: 'none',
                       }}
                     >
                       LV{stats.level}
@@ -680,18 +654,18 @@ function StandingRow({
                   </div>
 
                   {/* RANK */}
+                  {/* Position, in the kit's one decorative treatment. A
+                      chrome numeral is how these boards said "this is the
+                      standing" without a label — see .arc-chrome. */}
                   <motion.span
                     layout="position"
+                    className="arc-chrome"
                     style={{
                       flex: '0 0 auto',
-                      fontVariantNumeric: 'tabular-nums',
-                      width: '2.5ch',
+                      width: '2.6ch',
                       textAlign: 'right',
-                      color: accent,
-                      fontSize: 'clamp(13px, 1.6vw, 20px)',
-                      ...(isFirst || entry.color
-                        ? { textShadow: `0 0 10px ${accent}80` }
-                        : {}),
+                      fontSize: 'clamp(20px, 2.6vw, 34px)',
+                      lineHeight: 1,
                     }}
                   >
                     {String(entry.rank).padStart(2, '0')}
@@ -699,7 +673,7 @@ function StandingRow({
 
                   {/* ONLINE DOT */}
                   <motion.span
-                    className={`online-dot ${entry.isOnline ? 'online-dot-active' : 'online-dot-inactive'}`}
+                    className={`arc-lamp ${entry.isOnline ? 'arc-lamp-on' : 'arc-lamp-off'}`}
                     style={{ flex: '0 0 auto' }}
                     animate={{ scale: entry.isOnline ? [1, 1.3, 1] : 1 }}
                     transition={{ scale: { duration: 0.3 } }}
@@ -709,52 +683,44 @@ function StandingRow({
                   <div style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: '4px', minWidth: 0 }}>
                     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline' }}>
                       <span
-                        className="ps1-plate"
+                        className="arc-label-plain"
                         style={{
                           overflow: 'hidden',
                           textOverflow: 'ellipsis',
                           whiteSpace: 'nowrap',
-                          color: accent,
                           fontSize: 'clamp(14px, 1.9vw, 24px)',
-                          fontWeight: 700,
                           lineHeight: 1,
-                          ...(entry.color ? { '--uc': entry.color } as React.CSSProperties : {}),
-                          ...(isFirst
-                            ? { animation: 'namePulse 3s ease-in-out infinite' }
-                            : entry.color || entry.rank <= 3
-                              ? { textShadow: glowShadow(entry.rank, entry.color) }
-                              : {}),
                         }}
                       >
-                        {isFirst ? '♦ ' : ''}
+                        {isFirst ? '\u25c6 ' : ''}
                         {entry.name}
+                        {/* Burning is a state, so it is drawn as a label —
+                            red, bevelled, blinking on a step rather than
+                            fading. The old neon flicker was the one piece of
+                            bloom left on the board. */}
                         {isHot && (
                           <span
+                            className="arc-label"
                             style={{
-                              color: '#ff5e2d',
-                              textShadow: '0 0 8px #ff5e2d, 0 0 20px #ff5e2d60',
-                              animation: 'hotFlicker 1.4s infinite',
+                              animation: 'arcBlink 1.2s steps(1, end) infinite',
                               fontSize: '0.5em',
-                              letterSpacing: '0.2em',
                               verticalAlign: 'middle',
                               marginLeft: '12px',
                             }}
                           >
-                            [BURNING]
+                            Burning
                           </span>
                         )}
                       </span>
+                      {/* The running total. Amber, because it is still
+                          moving — the kit's whole rule for live values. */}
                       <span
+                        className="arc-value-live"
                         style={{
                           flex: '0 0 auto',
                           paddingLeft: '12px',
-                          fontVariantNumeric: 'tabular-nums',
-                          color: tokenColor(entry.rank, entry.color),
                           fontSize: 'clamp(12px, 1.5vw, 18px)',
                           lineHeight: 1,
-                          ...(isFirst || entry.color
-                            ? { textShadow: `0 0 8px ${tokenColor(entry.rank, entry.color)}60` }
-                            : {}),
                         }}
                       >
                         <AnimatedTokens value={entry.totalTokens} formatter={fmtTokens} />
@@ -763,19 +729,17 @@ function StandingRow({
 
                     {/* POWER GAUGE */}
                     <div
-                      className="bar-track"
+                      className="bar-track arc-gauge"
                       style={{
-                        background: `repeating-linear-gradient(to right, ${GRIDLINE_COLOR} 0 1px, transparent 1px ${stepPercent}%), ${barTrackColor(entry.rank, entry.color)}`,
-                        boxShadow: 'inset 1px 1px 0 0 #0a0a18, inset -1px -1px 0 0 #34346b',
+                        background: `repeating-linear-gradient(to right, ${GRIDLINE_COLOR} 0 1px, transparent 1px ${stepPercent}%), ${ARCADE.groundDeep}`,
                       }}
                     >
                       <motion.div
-                        className={`bar-block ${isFirst ? 'rank-1-bar' : ''}`}
+                        className="bar-block"
                         animate={{ width: `${ratio * 100}%` }}
                         transition={{ type: 'spring', stiffness: 60, damping: 15 }}
                         style={{
                           display: 'flex',
-                          boxShadow: barShadow(entry.rank, entry.color),
                           // Reporters older than v3 send no model split. Until
                           // theirs lands we keep the original solid bar rather
                           // than showing a misleading single-model stack.
@@ -801,7 +765,7 @@ function StandingRow({
 
                   {/* STAT BLOCK */}
                   <div
-                    className="ps1-panel-inset"
+                    className="arc-inset"
                     style={{
                       flex: '0 0 auto',
                       display: 'flex',
@@ -811,17 +775,12 @@ function StandingRow({
                       minWidth: 'clamp(150px, 17vw, 210px)',
                     }}
                   >
-                    <StatPlate label="PWR" value={String(stats.power)} color={accent} />
-                    <StatPlate
-                      label="SPD"
-                      value={String(stats.speed)}
-                      color={isHot ? '#ff5e2d' : burnRate > 0 ? PS1.green : PS1.textFaint}
-                    />
-                    <StatPlate
-                      label="TODAY"
-                      value={fmtTokensShort(entry.tokensToday)}
-                      color={PS1.textDim}
-                    />
+                    {/* Three label/value pairs, exactly as the kit draws
+                        them: red caps over a white numeral, and amber only
+                        where the number is still moving. */}
+                    <StatPlate label="PWR" value={String(stats.power)} />
+                    <StatPlate label="SPD" value={String(stats.speed)} live={burnRate > 0} />
+                    <StatPlate label="Today" value={fmtTokensShort(entry.tokensToday)} />
                   </div>
                   </div>
 
@@ -832,7 +791,6 @@ function StandingRow({
                         segments={segments}
                         stats={stats}
                         burnRate={burnRate}
-                        accent={accent}
                       />
                     )}
                   </AnimatePresence>
@@ -854,13 +812,11 @@ function RowDrawer({
   segments,
   stats,
   burnRate,
-  accent,
 }: {
   readonly entry: LeaderboardEntry
   readonly segments: ReadonlyArray<ModelSegment>
   readonly stats: PowerStats
   readonly burnRate: number
-  readonly accent: string
 }): React.ReactElement {
   const cacheShare =
     entry.totalTokens > 0 ? Math.round((entry.cacheTokens / entry.totalTokens) * 100) : 0
@@ -874,7 +830,7 @@ function RowDrawer({
       style={{ overflow: 'hidden' }}
     >
       <div
-        className="ps1-drawer"
+        className="arc-drawer"
         style={{
           marginTop: 'clamp(6px, 0.8vh, 10px)',
           padding: 'clamp(8px, 1vh, 12px) clamp(10px, 1.2vw, 16px)',
@@ -885,14 +841,11 @@ function RowDrawer({
       >
         {/* MODEL SPLIT — the stacked bar above, itemised. */}
         <div style={{ display: 'flex', flexDirection: 'column', gap: '5px', minWidth: 0 }}>
-          <span
-            className="ps1-plate"
-            style={{ fontSize: 'clamp(7px, 0.8vw, 10px)', color: PS1.textFaint }}
-          >
+          <span className="arc-label" style={{ fontSize: 'clamp(7px, 0.8vw, 10px)' }}>
             Model split
           </span>
           {segments.length === 0 ? (
-            <span style={{ fontSize: 'clamp(9px, 1vw, 12px)', color: PS1.textFaint }}>
+            <span className="arc-meta" style={{ fontSize: 'clamp(9px, 1vw, 12px)' }}>
               No split reported — reporter predates v3.
             </span>
           ) : (
@@ -912,19 +865,20 @@ function RowDrawer({
                   style={{ background: segmentGradient(segment.color), flex: '0 0 auto' }}
                 />
                 <span
+                  className="arc-caption"
                   style={{
                     flex: 1,
                     minWidth: 0,
                     overflow: 'hidden',
                     textOverflow: 'ellipsis',
                     whiteSpace: 'nowrap',
-                    color: PS1.textDim,
+                    textShadow: 'none',
                   }}
                 >
                   {segment.label}
                 </span>
-                <span style={{ color: PS1.text }}>{fmtTokens(segment.tokens)}</span>
-                <span style={{ color: PS1.textFaint, width: '4ch', textAlign: 'right' }}>
+                <span style={{ color: ARCADE.value }}>{fmtTokens(segment.tokens)}</span>
+                <span className="arc-meta" style={{ width: '4ch', textAlign: 'right' }}>
                   {Math.round(segment.share * 100)}%
                 </span>
               </div>
@@ -934,27 +888,20 @@ function RowDrawer({
 
         {/* LEDGER — the numbers the gauge cannot carry. */}
         <div style={{ display: 'flex', flexDirection: 'column', gap: '5px' }}>
-          <span
-            className="ps1-plate"
-            style={{ fontSize: 'clamp(7px, 0.8vw, 10px)', color: PS1.textFaint }}
-          >
+          <span className="arc-label" style={{ fontSize: 'clamp(7px, 0.8vw, 10px)' }}>
             Ledger
           </span>
-          <DrawerStat label="Level" value={`LV${stats.level}`} color={PS1.gold} />
-          <DrawerStat label="In" value={fmtTokens(entry.inputTokens)} color={PS1.textDim} />
-          <DrawerStat label="Out" value={fmtTokens(entry.outputTokens)} color={PS1.textDim} />
-          <DrawerStat
-            label="Cache"
-            value={`${fmtTokens(entry.cacheTokens)} · ${cacheShare}%`}
-            color={PS1.textDim}
-          />
-          <DrawerStat label="Sessions" value={String(entry.sessionCount)} color={PS1.textDim} />
+          <DrawerStat label="Level" value={`LV${stats.level}`} />
+          <DrawerStat label="In" value={fmtTokens(entry.inputTokens)} />
+          <DrawerStat label="Out" value={fmtTokens(entry.outputTokens)} />
+          <DrawerStat label="Cache" value={`${fmtTokens(entry.cacheTokens)} · ${cacheShare}%`} />
+          <DrawerStat label="Sessions" value={String(entry.sessionCount)} />
           <DrawerStat
             label="Burn"
             value={burnRate > 0 ? `${Math.round(burnRate).toLocaleString()}/min` : 'Idle'}
-            color={burnRate > 0 ? PS1.green : PS1.textFaint}
+            live={burnRate > 0}
           />
-          <DrawerStat label="Last seen" value={fmtTime(entry.lastSeen)} color={accent} />
+          <DrawerStat label="Last seen" value={fmtTime(entry.lastSeen)} />
         </div>
       </div>
     </motion.div>
@@ -964,11 +911,11 @@ function RowDrawer({
 function DrawerStat({
   label,
   value,
-  color,
+  live = false,
 }: {
   readonly label: string
   readonly value: string
-  readonly color: string
+  readonly live?: boolean
 }): React.ReactElement {
   return (
     <div
@@ -980,8 +927,8 @@ function DrawerStat({
         fontVariantNumeric: 'tabular-nums',
       }}
     >
-      <span style={{ color: PS1.textFaint }}>{label}</span>
-      <span style={{ color }}>{value}</span>
+      <span className="arc-meta">{label}</span>
+      <span style={{ color: live ? ARCADE.amber : ARCADE.value }}>{value}</span>
     </div>
   )
 }
@@ -1019,7 +966,7 @@ function TimelineRow({
         delay: 0.3,
         height: { duration: 0.18, ease: 'linear', delay: 0 },
       }}
-      className={['ps1-cursor', nav.isFocused ? 'ps1-cursor-on' : ''].filter(Boolean).join(' ')}
+      className={['ps1-cursor', nav.isFocused ? 'arc-row-on' : ''].filter(Boolean).join(' ')}
       style={{
         position: 'relative',
         zIndex: 2,
@@ -1030,7 +977,7 @@ function TimelineRow({
       }}
     >
       <div
-        className="ps1-panel"
+        className="arc-panel"
         style={{ minWidth: 0, height: '100%', padding: '6px 10px', overflow: 'hidden' }}
       >
         <Timeline />

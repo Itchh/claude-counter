@@ -3,7 +3,19 @@
 import { Suspense, lazy } from 'react'
 import { GT, PS1, PS1_TYPE } from '../../ps1/theme'
 import { SCALED_SURFACE } from '../../ps1/hudScale'
-import type { ChannelProps } from '../ChannelRegistry'
+
+export interface RaceChannelProps {
+  /** True while the race is the thing on screen. Scenes idle when false. */
+  readonly isLive: boolean
+  /**
+   * True while a cabinet window is open over it — the race holds still.
+   *
+   * Optional, and false by default, so a caller that has no windows to open
+   * (the retired channel deck still imports this module) does not have to
+   * declare a state it does not have.
+   */
+  readonly paused?: boolean
+}
 
 // three/R3F is ~600kb, so it is loaded only when this channel is first tuned
 // to. The deck already imports this module lazily; `lazy` here defers the
@@ -16,7 +28,7 @@ const RaceScene = lazy(async () => ({
   default: (await import('./RaceScene')).RaceScene,
 }))
 
-export function RaceChannel(props: ChannelProps): React.ReactElement {
+export function RaceChannel(props: RaceChannelProps): React.ReactElement {
   return (
     <Suspense fallback={<RaceSkeleton />}>
       <RaceScene {...props} />
@@ -26,9 +38,8 @@ export function RaceChannel(props: ChannelProps): React.ReactElement {
 
 /**
  * Occupies exactly the same regions as the loaded scene — full-bleed canvas,
- * slanted tower down the left, console bar across the foot — so nothing
- * shifts when 3D arrives. The bar in particular is 156px whether or not the
- * instruments have anything to say yet.
+ * trace and clocks top-left, the order down the right — so nothing shifts
+ * when 3D arrives.
  */
 function RaceSkeleton(): React.ReactElement {
   return (
@@ -51,9 +62,9 @@ function RaceSkeleton(): React.ReactElement {
       <div
         style={{
           position: 'absolute',
-          left: '18px',
-          top: '58px',
-          minWidth: '320px',
+          right: '18px',
+          top: '72px',
+          minWidth: '230px',
           display: 'flex',
           flexDirection: 'column',
           gap: '3px',
@@ -86,17 +97,6 @@ function RaceSkeleton(): React.ReactElement {
           <span style={{ animation: 'blink 1.2s step-end infinite' }}>_</span> Loading circuit
         </span>
       </div>
-
-      <div
-        className="gt-bar"
-        style={{
-          position: 'absolute',
-          left: 0,
-          right: 0,
-          bottom: 0,
-          height: '156px',
-        }}
-      />
     </div>
   )
 }

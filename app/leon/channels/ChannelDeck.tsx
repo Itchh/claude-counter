@@ -13,7 +13,7 @@ import {
   useControlHints,
   type ControlHint,
 } from '../ps1/ControlHints'
-import { PS1 } from '../ps1/theme'
+import { PS1, ARCADE } from '../ps1/theme'
 import { SCALED_CHROME } from '../ps1/hudScale'
 
 // The deck is the console: it owns which channel is live, how long it rests
@@ -92,13 +92,14 @@ export function ChannelDeck(): React.ReactElement {
   }, [index, channel.dwellMs, goTo])
 
   useEffect(() => {
+    // Arrows only. The number row used to jump straight to a channel, which
+    // was worth about two keystrokes and cost the deck its most obvious
+    // shortcut: on a screen full of named people, 1 to 9 should pick a
+    // person, not a channel. See the digit handlers in the navigator and in
+    // the race channel — both read the order that is on screen at the time.
     const onKey = (event: KeyboardEvent): void => {
       if (event.key === 'ArrowRight') goTo(index + 1, true)
       else if (event.key === 'ArrowLeft') goTo(index - 1, true)
-      else if (/^[1-9]$/.test(event.key)) {
-        const target = Number(event.key) - 1
-        if (target < CHANNELS.length) goTo(target, true)
-      }
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
@@ -210,6 +211,7 @@ function DeckHints(): null {
     const base: ControlHint[] = [
       { id: 'channel', key: 'dpad', axis: 'horizontal', label: 'Channel' },
       { id: 'move', key: 'dpad', axis: 'vertical', label: 'Move' },
+      { id: 'player', key: 'digits', label: 'Player' },
     ]
     if (hasFocus) {
       base.push({
@@ -280,14 +282,11 @@ function ChannelTuning({ name }: { name: string }): React.ReactElement {
         display: 'flex',
         alignItems: 'center',
         justifyContent: 'center',
-        background: PS1.void,
+        background: ARCADE.ground,
         ...SCALED_CHROME,
       }}
     >
-      <span
-        className="ps1-plate"
-        style={{ color: PS1.textDim, fontSize: 'clamp(10px, 1.2vw, 14px)' }}
-      >
+      <span className="arc-caption" style={{ fontSize: 'clamp(10px, 1.2vw, 14px)' }}>
         <span style={{ animation: 'blink 1.2s step-end infinite' }}>_</span> Tuning {name}
       </span>
     </div>

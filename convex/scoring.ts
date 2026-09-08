@@ -303,6 +303,9 @@ export interface RacerState {
   readonly key: string
   readonly name: string
   readonly color: string | null
+  /** The paint shop's choices, null for a driver who has never opened it. */
+  readonly paint: string | null
+  readonly livery: string | null
   readonly rank: number
   readonly score: number
   readonly rawTokens: number
@@ -341,6 +344,13 @@ export const getRace = query({
 
     for (let i = 0; i < ranked.length; i++) {
       const row = ranked[i]
+      // The paint shop writes to `users`, not to `scores` — a paint job is a
+      // property of the driver, not of the day they are having — so the two
+      // are joined here rather than duplicated on every period's row.
+      const user = await ctx.db
+        .query("users")
+        .withIndex("by_key", (q) => q.eq("key", row.userKey))
+        .unique()
       const recent = await ctx.db
         .query("buckets")
         .withIndex("by_userKey_bucketStart", (q) =>
@@ -355,6 +365,8 @@ export const getRace = query({
         key: row.userKey,
         name: row.name,
         color: row.color ?? null,
+        paint: user?.paint ?? null,
+        livery: user?.livery ?? null,
         rank: i + 1,
         score: row.score,
         rawTokens: row.rawTokens,

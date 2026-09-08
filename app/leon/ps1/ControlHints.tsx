@@ -1,7 +1,7 @@
 'use client'
 
 import { createContext, useCallback, useContext, useEffect, useMemo, useState } from 'react'
-import { PS1, FONTS } from './theme'
+import { FONTS, ARCADE } from './theme'
 
 // The corner prompt strip: the convention every PS1 menu used to tell you what
 // the buttons did, because the console shipped without a manual you'd actually
@@ -16,7 +16,7 @@ import { PS1, FONTS } from './theme'
 //      channel knows what it responds to; the cabinet does not.
 
 /** The sprites lifted from the pixel pad/keyboard sheets. */
-export type HintKey = 'dpad' | 'enter' | 'esc'
+export type HintKey = 'dpad' | 'enter' | 'esc' | 'digits'
 
 /** Which arms of the d-pad are live, drawn as marks beside the chip. */
 export type HintAxis = 'horizontal' | 'vertical'
@@ -28,12 +28,15 @@ export interface ControlHint {
   readonly label: string
 }
 
-const SPRITES: Record<HintKey, { readonly src: string; readonly width: number; readonly height: number }> = {
+const SPRITES: Record<HintKey, { readonly src: string; readonly width: number; readonly height: number } | null> = {
   // Native pixel dimensions. Rendered 1:1 and never scaled by a fraction —
   // a half-scaled sprite is a blurred sprite.
   dpad: { src: '/ps1/keys/dpad.png', width: 28, height: 28 },
   enter: { src: '/ps1/keys/enter.png', width: 23, height: 16 },
   esc: { src: '/ps1/keys/esc.png', width: 16, height: 16 },
+  // The number row has no sprite in the key set, and inventing one badly is
+  // worse than drawing it as type — see NumberKeys.
+  digits: null,
 }
 
 const ROW_HEIGHT = 28
@@ -147,20 +150,24 @@ function HintRow({ hint }: { readonly hint: ControlHint }): React.ReactElement {
       {/* The slant is on the bar; the contents are counter-slanted so glyphs
           stay upright. Skewed pixel art is mush. */}
       <div style={{ display: 'flex', alignItems: 'center', gap: '6px', transform: 'skewX(12deg)' }}>
-        <img
-          src={sprite.src}
-          alt=""
-          width={sprite.width}
-          height={sprite.height}
-          style={{ imageRendering: 'pixelated', display: 'block' }}
-        />
+        {sprite ? (
+          <img
+            src={sprite.src}
+            alt=""
+            width={sprite.width}
+            height={sprite.height}
+            style={{ imageRendering: 'pixelated', display: 'block' }}
+          />
+        ) : (
+          <NumberKeys />
+        )}
         {hint.axis && <AxisMarks axis={hint.axis} />}
         <span
           style={{
             fontFamily: FONTS.hud,
             fontSize: '13px',
             letterSpacing: '0.08em',
-            color: PS1.text,
+            color: ARCADE.value,
             textTransform: 'uppercase',
             whiteSpace: 'nowrap',
           }}
@@ -169,6 +176,34 @@ function HintRow({ hint }: { readonly hint: ControlHint }): React.ReactElement {
         </span>
       </div>
     </div>
+  )
+}
+
+/**
+ * The number row, drawn rather than sprited: two stamped keys with an ellipsis
+ * between them, which is how a cabinet's own overlay would have printed a
+ * range of buttons it had no room to show one by one.
+ */
+function NumberKeys(): React.ReactElement {
+  const key: React.CSSProperties = {
+    display: 'inline-flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    width: '16px',
+    height: '16px',
+    fontFamily: FONTS.hud,
+    fontSize: '11px',
+    lineHeight: 1,
+    color: ARCADE.value,
+    background: '#16161c',
+    boxShadow: 'inset 1px 1px 0 0 #55555f, inset -1px -1px 0 0 #0a0a0e',
+  }
+  return (
+    <span style={{ display: 'inline-flex', alignItems: 'center', gap: '3px' }}>
+      <span style={key}>1</span>
+      <span style={{ ...key, width: 'auto', background: 'none', boxShadow: 'none' }}>–</span>
+      <span style={key}>9</span>
+    </span>
   )
 }
 
@@ -189,8 +224,8 @@ function AxisMarks({ axis }: { readonly axis: HintAxis }): React.ReactElement {
   if (axis === 'horizontal') {
     return (
       <span style={{ display: 'flex', alignItems: 'center', gap: '3px' }}>
-        <span style={{ ...bar, borderRight: `${size}px solid ${PS1.gold}` }} />
-        <span style={{ ...bar, borderLeft: `${size}px solid ${PS1.gold}` }} />
+        <span style={{ ...bar, borderRight: `${size}px solid ${ARCADE.amber}` }} />
+        <span style={{ ...bar, borderLeft: `${size}px solid ${ARCADE.amber}` }} />
       </span>
     )
   }
@@ -202,7 +237,7 @@ function AxisMarks({ axis }: { readonly axis: HintAxis }): React.ReactElement {
           height: 0,
           borderLeft: `${size}px solid transparent`,
           borderRight: `${size}px solid transparent`,
-          borderBottom: `${size}px solid ${PS1.gold}`,
+          borderBottom: `${size}px solid ${ARCADE.amber}`,
         }}
       />
       <span
@@ -211,7 +246,7 @@ function AxisMarks({ axis }: { readonly axis: HintAxis }): React.ReactElement {
           height: 0,
           borderLeft: `${size}px solid transparent`,
           borderRight: `${size}px solid transparent`,
-          borderTop: `${size}px solid ${PS1.gold}`,
+          borderTop: `${size}px solid ${ARCADE.amber}`,
         }}
       />
     </span>

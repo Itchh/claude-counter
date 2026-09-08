@@ -81,7 +81,11 @@ const SPOTS: ReadonlyArray<ParkedSpot> = [
   },
 ]
 
-const SHADOW_PLANE = new THREE.PlaneGeometry(1.55, 2.75)
+// Larger than the car, because the blob fades inside its own page rather
+// than filling it. Kept in step with SHADOW_WIDTH/SHADOW_LENGTH in Kart.tsx —
+// a parked car with a visibly bigger shadow than a moving one reads as a
+// different kind of object.
+const SHADOW_PLANE = new THREE.PlaneGeometry(1.82, 2.98)
 
 export function ParkedCars(): React.ReactElement {
   return (
@@ -121,7 +125,9 @@ function ParkedCar({ spot }: { readonly spot: ParkedSpot }): React.ReactElement 
     const created = createPs1Material({
       color: '#000000',
       map: configurePs1Texture(shadowTexture),
-      alphaTest: 0.35,
+      // Blended low-opacity steps, same as the racing cars — see Kart.tsx.
+      blend: true,
+      alphaTest: 0.02,
     })
     created.polygonOffset = true
     created.polygonOffsetFactor = -2

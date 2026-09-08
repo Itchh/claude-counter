@@ -5,6 +5,8 @@ import { useGLTF } from '@react-three/drei'
 import * as THREE from 'three'
 import { createPs1Material, configurePs1Texture } from './Ps1Material'
 import { useCircuit } from './CircuitContext'
+import { ROAD_CLEARANCE } from './circuit'
+import { buildGroundField } from './groundField'
 import type { TrackDefinition, TrackSurface } from './tracks/types'
 
 // An imported circuit, rebuilt as PS1 geometry.
@@ -39,7 +41,17 @@ export function TrackModel({ definition }: TrackModelProps): React.ReactElement 
   // Cloned because useGLTF caches by URL: mutating the cached scene's
   // materials would corrupt the copy handed to the next mount, and this
   // channel remounts on every WebGL context loss.
-  const model = useMemo(() => scene.clone(true), [scene])
+  const model = useMemo(() => {
+    const clone = scene.clone(true)
+    // Applied here rather than on a wrapping group because everything
+    // downstream — the ground index, the height profile, the camera's
+    // collision probes — reads world matrices off this object, and a group
+    // scaled by React would not have updated them by the time those effects
+    // run.
+    clone.scale.setScalar(definition.worldScale ?? 1)
+    clone.updateMatrixWorld(true)
+    return clone
+  }, [scene, definition.worldScale])
 
   const materials = useMemo(
     () => applyTrackSurfaces(model, definition),
@@ -60,25 +72,35 @@ export function TrackModel({ definition }: TrackModelProps): React.ReactElement 
   )
 }
 
-/** Rays cast around the lap when measuring the road's real height. */
-const HEIGHT_PROFILE_SAMPLES = 176
-/** How far above the highest plausible road the rays start. */
-const RAY_CEILING = 260
-/** Lift applied to the measured surface, so wheels sit on it, not in it. */
-const ROAD_CLEARANCE = 0.06
+/** Points sampled around the lap when measuring the road's real height. */
+const HEIGHT_PROFILE_SAMPLES = 192
+/** Measurements taken across the road at each of those samples. */
+const HEIGHT_PROFILE_SLOTS = 7
+/** How far past the kerb the measured strip reaches, in game units. */
+const HEIGHT_PROFILE_MARGIN = 2.5
+/**
+ * How far a measurement may sit from the spline's own guess before it is
+ * treated as something other than the road — a bridge deck, a roof, the
+ * inside of a tunnel — and the guess is preferred instead.
+ */
+const HEIGHT_PLAUSIBLE_BAND = 30
 
 /**
- * Measures the road's actual height around the lap and hands it to the
- * circuit — the fix for the floating grid.
+ * Measures the road's actual height around and across the lap, hands it to
+ * the circuit, and hands the whole scene the ground index everything else
+ * asks about where the world is.
  *
  * The baked spline's x/z trace is derived from the road's own footprint and
  * is trustworthy; its y is reconstructed from a 2D grid and is not — on the
  * mountain circuits it runs metres above or below the tarmac, so the cars
  * hovered in some corners and sank in others. The model itself is the ground
- * truth, and once it is mounted, asking it is one raycast per sample: straight
- * down at each of 176 points along the centreline, keeping whichever hit lies
- * nearest the spline's own estimate so an overpass does not capture the road
- * running underneath it.
+ * truth, and once it is mounted and indexed, asking it is a lookup per
+ * sample — see groundField.ts for why that indexing is not optional.
+ *
+ * It is measured across the road as well as around it because a mountain
+ * circuit is banked and cambered: one height per point on the lap is only
+ * ever right for a car on the exact centreline, and every other lane was
+ * floating above the tarmac or buried in it by however much the road leaned.
  *
  * An effect rather than a bake-time fix, deliberately: it corrects every
  * track that will ever be imported, including ones whose bake nobody
@@ -89,76 +111,140 @@ function SplineGrounding({ model }: { readonly model: THREE.Object3D }): null {
   const circuit = useCircuit()
 
   useEffect(() => {
-    const raycaster = new THREE.Raycaster()
-    raycaster.ray.direction.set(0, -1, 0)
-    raycaster.far = RAY_CEILING * 2
+    // The index first, and everything else through it. Built once, in tens of
+    // milliseconds; the raycasting version of this effect blocked the main
+    // thread for twenty seconds and froze the race where it stood.
+    const field = buildGroundField(model)
+    circuit.setGround(field)
+    // Cleared before measuring, so the probes read the spline's own y as
+    // their hint rather than the last track's measurements.
+    circuit.setHeightField(null)
 
-    const profile = new Float32Array(HEIGHT_PROFILE_SAMPLES)
-    const misses: number[] = []
+    const extent = circuit.halfWidth + HEIGHT_PROFILE_MARGIN
+    const slots = HEIGHT_PROFILE_SLOTS
+    const centre = (slots - 1) / 2
+    const data = new Float32Array(HEIGHT_PROFILE_SAMPLES * slots)
     const point = new THREE.Vector3()
     const tangent = new THREE.Vector3()
+    let measuredAnything = false
+    let previousCentre = Number.NaN
 
-    // The model must have world matrices before it can be raycast; it has
-    // only just mounted and three will not update it until the next render.
-    model.updateWorldMatrix(true, true)
-
-    for (let index = 0; index < HEIGHT_PROFILE_SAMPLES; index++) {
-      circuit.sampleInto(index / HEIGHT_PROFILE_SAMPLES, 0, point, tangent)
+    for (let row = 0; row < HEIGHT_PROFILE_SAMPLES; row++) {
+      circuit.sampleInto(row / HEIGHT_PROFILE_SAMPLES, 0, point, tangent)
       const splineY = point.y
-      raycaster.ray.origin.set(point.x, splineY + RAY_CEILING, point.z)
-      const hits = raycaster.intersectObject(model, true)
+      // The previous sample's road is a better guess than the spline's own y
+      // — but only while the two still agree about roughly where the road is,
+      // or one bad reading on a roof would drag the rest of the lap up onto it.
+      const centreHint =
+        Number.isNaN(previousCentre) || Math.abs(previousCentre - splineY) > HEIGHT_PLAUSIBLE_BAND
+          ? splineY
+          : previousCentre
+      const centreHeight = field.heightAt(point.x, point.z, centreHint)
+      if (!Number.isNaN(centreHeight)) {
+        previousCentre = centreHeight
+        measuredAnything = true
+      }
+      data[row * slots + centre] = centreHeight
 
-      if (hits.length === 0) {
-        misses.push(index)
-        profile[index] = Number.NaN
-        continue
+      // Sideways from the centre outwards, each column hinted by the one
+      // beside it: across a banked road the neighbour is always the closest
+      // available truth, and it keeps a barrier top from capturing the strip.
+      for (const direction of [-1, 1] as const) {
+        let hint = Number.isNaN(centreHeight) ? centreHint : centreHeight
+        for (let step = 1; step <= centre; step++) {
+          const column = centre + direction * step
+          const lateral = (column / centre - 1) * extent
+          circuit.sampleInto(row / HEIGHT_PROFILE_SAMPLES, lateral, point, tangent)
+          const height = field.heightAt(point.x, point.z, hint)
+          if (!Number.isNaN(height)) {
+            hint = height
+            measuredAnything = true
+          }
+          data[row * slots + column] = height
+        }
       }
-      // Nearest to the spline's own estimate, not nearest to the sky:
-      // a bridge over the road would otherwise capture the lap below it.
-      let best = hits[0].point.y
-      for (const hit of hits) {
-        if (Math.abs(hit.point.y - splineY) < Math.abs(best - splineY)) best = hit.point.y
-      }
-      profile[index] = best + ROAD_CLEARANCE
     }
 
-    // A missed ray (a gap in the mesh, a bridge seam) borrows its neighbours.
-    for (const index of misses) {
-      let before = index
-      let after = index
-      for (let step = 0; step < HEIGHT_PROFILE_SAMPLES; step++) {
-        if (!Number.isNaN(profile[before])) break
-        before = (before - 1 + HEIGHT_PROFILE_SAMPLES) % HEIGHT_PROFILE_SAMPLES
+    if (!measuredAnything) {
+      // Nothing measured at all — a model with no road under the spline.
+      // Leave the circuit uncorrected rather than pin the field to NaN.
+      console.warn('SplineGrounding: no ground found under the spline; field discarded.')
+      circuit.setHeightField(null)
+      return () => {
+        circuit.setGround(null)
       }
-      for (let step = 0; step < HEIGHT_PROFILE_SAMPLES; step++) {
-        if (!Number.isNaN(profile[after])) break
-        after = (after + 1) % HEIGHT_PROFILE_SAMPLES
-      }
-      if (Number.isNaN(profile[before]) || Number.isNaN(profile[after])) {
-        // Nothing measured at all — a model with no road under the spline.
-        // Leave the circuit uncorrected rather than pin the field to NaN.
-        console.warn('SplineGrounding: no road found under the spline; profile discarded.')
-        circuit.setHeightProfile(null)
-        return
-      }
-      profile[index] = (profile[before] + profile[after]) / 2
     }
 
-    // A three-tap median pass: a single ray that clipped a barrier top or a
-    // kerb edge would otherwise put a step into the lap that every car jumps.
-    const smoothed = new Float32Array(HEIGHT_PROFILE_SAMPLES)
-    for (let index = 0; index < HEIGHT_PROFILE_SAMPLES; index++) {
-      const a = profile[(index - 1 + HEIGHT_PROFILE_SAMPLES) % HEIGHT_PROFILE_SAMPLES]
-      const b = profile[index]
-      const c = profile[(index + 1) % HEIGHT_PROFILE_SAMPLES]
-      smoothed[index] = Math.max(Math.min(a, b), Math.min(Math.max(a, b), c))
+    fillGaps(data, HEIGHT_PROFILE_SAMPLES, slots)
+
+    // A three-tap median pass along the lap: a single reading that caught a
+    // barrier top or a kerb edge would otherwise put a step into the road
+    // that every car jumps.
+    const smoothed = new Float32Array(data.length)
+    for (let row = 0; row < HEIGHT_PROFILE_SAMPLES; row++) {
+      for (let column = 0; column < slots; column++) {
+        const a = data[((row - 1 + HEIGHT_PROFILE_SAMPLES) % HEIGHT_PROFILE_SAMPLES) * slots + column]
+        const b = data[row * slots + column]
+        const c = data[((row + 1) % HEIGHT_PROFILE_SAMPLES) * slots + column]
+        smoothed[row * slots + column] =
+          Math.max(Math.min(a, b), Math.min(Math.max(a, b), c)) + ROAD_CLEARANCE
+      }
     }
 
-    circuit.setHeightProfile(smoothed)
-    return () => circuit.setHeightProfile(null)
+    circuit.setHeightField({
+      samples: HEIGHT_PROFILE_SAMPLES,
+      slots,
+      extent,
+      data: smoothed,
+    })
+
+    return () => {
+      circuit.setHeightField(null)
+      circuit.setGround(null)
+    }
   }, [model, circuit])
 
   return null
+}
+
+/**
+ * Fills every unmeasured cell from its measured neighbours.
+ *
+ * A missed ray is a gap in the mesh, a bridge seam, or a strip of road that
+ * genuinely runs out beyond the kerb. Borrowing sideways first keeps the
+ * road's own camber; borrowing around the lap is the fallback when a whole
+ * slice of the width found nothing at all.
+ */
+function fillGaps(data: Float32Array, rows: number, slots: number): void {
+  for (let row = 0; row < rows; row++) {
+    for (let column = 0; column < slots; column++) {
+      const index = row * slots + column
+      if (!Number.isNaN(data[index])) continue
+
+      // Sideways: nearest measured cell in this row.
+      let replacement = Number.NaN
+      for (let distance = 1; distance < slots && Number.isNaN(replacement); distance++) {
+        const left = column - distance
+        const right = column + distance
+        if (left >= 0 && !Number.isNaN(data[row * slots + left])) {
+          replacement = data[row * slots + left]
+        } else if (right < slots && !Number.isNaN(data[row * slots + right])) {
+          replacement = data[row * slots + right]
+        }
+      }
+
+      // Around the lap: nearest measured cell in this column.
+      for (let distance = 1; distance <= rows / 2 && Number.isNaN(replacement); distance++) {
+        const before = data[((row - distance + rows) % rows) * slots + column]
+        const after = data[((row + distance) % rows) * slots + column]
+        if (!Number.isNaN(before) && !Number.isNaN(after)) replacement = (before + after) / 2
+        else if (!Number.isNaN(before)) replacement = before
+        else if (!Number.isNaN(after)) replacement = after
+      }
+
+      data[index] = replacement
+    }
+  }
 }
 
 /**
@@ -184,15 +270,21 @@ function applyTrackSurfaces(
 
   root.traverse((child) => {
     if (!(child instanceof THREE.Mesh)) return
-    const source = Array.isArray(child.material) ? child.material[0] : child.material
-    // The source material's name is recorded on the mesh the first time
-    // through, because after that there is no source material left to ask —
-    // this function has replaced it. Under StrictMode the swap runs twice on
-    // the same object, and the second pass was reading back our own shader
-    // materials, finding them nameless, and repainting the entire circuit in
-    // the fallback grey. The whole track came out the colour of nothing.
-    const remembered = child.userData.trackSurface as string | undefined
-    const name = remembered ?? source?.name ?? ''
+    // The material the model shipped with is recorded on the mesh the first
+    // time through, because after that there is none left to ask — this
+    // function has replaced it. The swap runs more than once on the same
+    // object (StrictMode double-invokes, and the memo re-runs whenever the
+    // definition identity changes), and every later pass was reading back our
+    // own shader materials: nameless, and carrying no texture. Remembering
+    // only the *name* was not enough. It kept the palette right and quietly
+    // dropped every texture page on the second pass, which is why both game
+    // rips rendered as one flat sheet of fallback grey — a hundred textured
+    // chunks rebuilt from a source that no longer had a map.
+    const current = Array.isArray(child.material) ? child.material[0] : child.material
+    const remembered = child.userData.trackSourceMaterial as THREE.Material | undefined
+    const source = remembered ?? current
+    child.userData.trackSourceMaterial = source
+    const name = source?.name ?? ''
     child.userData.trackSurface = name
 
     const surface = surfaces[name] ?? definition.surfaceDefaults ?? FALLBACK_SURFACE
@@ -206,7 +298,21 @@ function applyTrackSurfaces(
     // the separation stays visible and adjustable next to the colours it
     // belongs with. The bake merges the model to one mesh per material, which
     // is what makes moving a whole surface this cheap.
-    child.position.y = surface.lift ?? 0
+    //
+    // Relative to where the chunk already was, which it was not. This line
+    // used to assign `surface.lift ?? 0` outright, and a rip is a hundred
+    // chunks each placed by its own node translation — so on every imported
+    // circuit it silently flattened all hundred of them onto y = 0, moving
+    // parts of the mountain by tens of units and tearing holes where two
+    // chunks had met. Nothing caught it because everything downstream
+    // measured the same displaced geometry: the cars drove on the surface
+    // that was actually drawn, wrong as it was. What gave it away was the
+    // road ending up 56 units below the spline that was traced from it.
+    const restingY = (child.userData.trackRestingY ?? child.position.y) as number
+    child.userData.trackRestingY = restingY
+    // The lift is stated in game units, and these positions are in the
+    // model's own units — which `worldScale` no longer leaves equal.
+    child.position.y = restingY + (surface.lift ?? 0) / (definition.worldScale ?? 1)
 
     let material = byName.get(name)
     if (!material) {
@@ -221,8 +327,27 @@ function applyTrackSurfaces(
       // its alpha mask, fences keep their two sides and tinted glass keeps
       // its colour — the glTF already says all of it, per material, and a
       // registry entry could only ever repeat it back worse.
-      const sourceAlphaTest = standard && standard.alphaTest > 0 ? Math.max(0.3, standard.alphaTest) : 0
-      const sourceDoubleSided = standard?.side === THREE.DoubleSide
+      // A glTF says "this material is see-through" in two different ways and
+      // this renderer can only honour one of them. `alphaMode: MASK` arrives
+      // as an alphaTest, which is a cut-out and is exactly what the hardware
+      // did. `alphaMode: BLEND` arrives as `transparent`, which is a blend —
+      // a thing this shader does not do at all, because the console barely
+      // did either. Reading only the first was why Bushido Peak's cherry
+      // blossom hung in the sky as solid pink slabs: the rip declares its
+      // foliage BLEND, we saw an alphaTest of zero, and drew every cut-out
+      // card as an opaque quad. A blended surface is treated as a masked one
+      // here, at the cutoff the era's own foliage used.
+      const sourceBlended = standard !== null && standard.transparent && standard.alphaTest === 0
+      const sourceMasked = standard !== null && (standard.alphaTest > 0 || standard.transparent)
+      const sourceAlphaTest = !sourceMasked
+        ? 0
+        : standard.alphaTest > 0
+          ? Math.max(0.3, standard.alphaTest)
+          : FOLIAGE_ALPHA_TEST
+      // A cut-out card is drawn from both sides whatever the rip claims: a
+      // masked surface is a leaf, a fence or a sign, and every one of those
+      // is a plane the camera can end up behind.
+      const sourceDoubleSided = standard?.side === THREE.DoubleSide || sourceMasked
       const sourceColor = standard && !map ? `#${standard.color.getHexString()}` : undefined
 
       material = createPs1Material({
@@ -238,6 +363,11 @@ function applyTrackSurfaces(
           : undefined,
         tint: map ? (surface.tint ?? 0.3) : 0,
         alphaTest: map ? (surface.alphaTest ?? sourceAlphaTest) : 0,
+        // Blended as well as masked, for the handful of surfaces a rip draws
+        // with soft edges: the threshold removes the page's empty background
+        // and the blend carries what is left of a leaf's own edge, instead of
+        // squaring it off into the slabs that were hanging over this circuit.
+        blend: map ? sourceBlended : false,
         // A baked texture already carries the shading its author painted into
         // it; the lighting model here only has to stop the unlit side of a
         // barrier crushing to black.
@@ -254,6 +384,18 @@ function applyTrackSurfaces(
 
   return created
 }
+
+/**
+ * Cut-out threshold for a surface the source declared blended.
+ *
+ * Low, and lower again now that these surfaces blend as well as cut out: the
+ * threshold's only remaining job is to throw away the page's empty
+ * background before it can write depth, and the soft edge of a leaf is
+ * carried by the blend rather than squared off by the cut. Set it near the
+ * middle and a mipmapped canopy thins to nothing at distance, because the
+ * mip has averaged every leaf against the emptiness around it.
+ */
+const FOLIAGE_ALPHA_TEST = 0.16
 
 /** Neutral grey. Loud enough to notice, quiet enough not to ruin a shot. */
 const FALLBACK_SURFACE: TrackSurface = { color: '#9a9ab5', ambient: 0.6 }

@@ -6,6 +6,7 @@ import { OBJLoader } from 'three/examples/jsm/loaders/OBJLoader.js'
 import * as THREE from 'three'
 import { createPs1Material, configurePs1Texture } from './Ps1Material'
 import { carModelFor, liveryFor, WHEEL_MODEL, SHADOW_TEXTURE_URL } from './cars'
+import { liveryShaderId } from '@/lib/livery'
 import { splitCarGeometry, type WheelPlacement } from './carGeometry'
 import { PS1 } from '../../ps1/theme'
 
@@ -19,9 +20,11 @@ import { PS1 } from '../../ps1/theme'
 // pair steers with the simulation's own steering angle, at a cost of four
 // more matrices per car — the same trade the era resolved this way round.
 //
-// The shadow is the period's whole answer to shadows: a dark cut-out card on
-// the road. No light, no projection, no softness. It does the one job a car
-// shadow has at 288 pixels — gluing the car to the tarmac — for one quad.
+// The shadow is the period's whole answer to shadows: a translucent blob on
+// the road. No light, no projection, no shadow map. It does the one job a car
+// shadow has at 288 pixels — gluing the car to the tarmac — for one quad, and
+// its softness is a Bayer checkerboard rather than an alpha ramp, because the
+// hardware faded things by dithering them.
 
 /** Ride height dips by this much at full speed, in track units. */
 const SQUAT_DEPTH = 0.06
@@ -34,9 +37,16 @@ const SPEED_REFERENCE = 12
 /** The pack wheel's own rolling radius, measured from Wheel.obj. */
 const WHEEL_MODEL_RADIUS = 0.4586
 
-/** Shadow card size relative to the car footprint, and its lift off the road. */
-const SHADOW_WIDTH = 1.55
-const SHADOW_LENGTH = 2.75
+/**
+ * Shadow card size relative to the car footprint, and its lift off the road.
+ *
+ * Grown from 1.55 x 2.75 when the blob stopped filling its page: the old mask
+ * was opaque corner to corner, so the quad *was* the shadow. The stepped one
+ * spends its outer fifth on the faintest band, so the card has to be a little
+ * larger than the car for the darkest step to still sit under the sills.
+ */
+const SHADOW_WIDTH = 1.82
+const SHADOW_LENGTH = 2.98
 const SHADOW_HEIGHT = 0.02
 
 export interface MotionBox {
@@ -50,12 +60,31 @@ interface KartProps {
   /** Picks the model. Stable per driver, so a car is an identity. */
   readonly index: number
   readonly color: string
+  /**
+   * The driver's chosen paint, set in the paint shop. Null means they have
+   * never opened it, and the car keeps the pack's own page untouched — which
+   * is the state every car on the grid starts in.
+   */
+  readonly paint?: string | null
+  /** The pattern id from lib/livery.ts. */
+  readonly livery?: string | null
   /** Mutable box written by the parent's frame loop. Never through React. */
   readonly speedBox: MotionBox
   readonly isActive: boolean
 }
 
-export function Kart({ index, color, speedBox, isActive }: KartProps): React.ReactElement {
+/**
+ * How far a chosen paint respray takes the pack's own page.
+ *
+ * Short of 1 on purpose. The respray keeps the page's luminance and replaces
+ * its hue (see uPaintMix in Ps1Material), so at 1 the glass and the lamps go
+ * the colour of the bodywork too. Held here, a little of the artist's own
+ * page shows through everywhere the paint is not — which is what stops eight
+ * repainted cars looking like eight coloured toys.
+ */
+const PAINT_STRENGTH = 0.82
+
+export function Kart({ index, color, paint = null, livery = null, speedBox, isActive }: KartProps): React.ReactElement {
   const bodyRef = useRef<THREE.Group>(null)
   const model = carModelFor(index)
 
@@ -65,7 +94,7 @@ export function Kart({ index, color, speedBox, isActive }: KartProps): React.Rea
   const loaded = useLoader(OBJLoader, model.objUrl)
   // The pack's own livery nearest the driver's colour, exactly as painted —
   // the colour wash this replaced muddied every page it touched.
-  const texture = useLoader(THREE.TextureLoader, liveryFor(index, color))
+  const texture = useLoader(THREE.TextureLoader, liveryFor(index, paint ?? color))
   const wheelObj = useLoader(OBJLoader, WHEEL_MODEL.objUrl)
   const wheelTexture = useLoader(THREE.TextureLoader, WHEEL_MODEL.textureUrl)
   const shadowTexture = useLoader(THREE.TextureLoader, SHADOW_TEXTURE_URL)
@@ -84,18 +113,33 @@ export function Kart({ index, color, speedBox, isActive }: KartProps): React.Rea
     return mesh ? mesh.geometry : null
   }, [wheelObj])
 
+  // The body's own box, measured once per chassis. The livery is painted
+  // against it, so a pattern lands identically on a long car and a short one.
+  const bodyBounds = useMemo(() => {
+    if (!split) return new THREE.Box3(new THREE.Vector3(), new THREE.Vector3(1, 1, 1))
+    split.body.computeBoundingBox()
+    return split.body.boundingBox ?? new THREE.Box3(new THREE.Vector3(), new THREE.Vector3(1, 1, 1))
+  }, [split])
+
   const material = useMemo(
     () =>
       createPs1Material({
         color: '#ffffff',
         map: configurePs1Texture(texture),
-        // No tint at all: the livery was chosen to carry the colour instead.
+        // No tint. The respray below replaces the page's hue outright; a
+        // multiply on top of it would only darken what it just set.
         tint: 0,
+        livery: {
+          pattern: liveryShaderId(livery),
+          paint: paint ?? color,
+          bounds: bodyBounds,
+          paintStrength: paint === null ? 0 : PAINT_STRENGTH,
+        },
         // A texture page already carries its own painted-in shading, so the
         // lighting model only has to keep the car from going flat.
         ambient: 0.62,
       }),
-    [texture],
+    [texture, paint, livery, color, bodyBounds],
   )
 
   const wheelMaterial = useMemo(
@@ -113,9 +157,13 @@ export function Kart({ index, color, speedBox, isActive }: KartProps): React.Rea
     const created = createPs1Material({
       color: '#000000',
       map: configurePs1Texture(shadowTexture),
-      // Cut-out, not blended — the hardware's only transparency, and the hard
-      // edge is what makes it read as a PSX shadow rather than a modern one.
-      alphaTest: 0.35,
+      // Blended, because the page is three steps of low opacity rather than a
+      // mask — the shadow darkens the tarmac instead of replacing it, which
+      // is the whole difference between a shadow and a hole. The alpha test
+      // is only there to throw away the empty corners of the card before they
+      // cost a blend.
+      blend: true,
+      alphaTest: 0.02,
       emissive: 0,
     })
     // Sits a hair above the tarmac; the offset stops the two quads shimmering

@@ -31,6 +31,12 @@ interface MinimapProps {
   readonly racersRef: React.RefObject<SimRacer[]>
   /** Highlighted with a ring — whoever the director is currently on. */
   readonly focusKey: string | null
+  /**
+   * Drawn size in CSS pixels. The bitmap stays MAP_PIXELS square and is scaled
+   * up with `image-rendering: pixelated`, so a larger map is the same drawing
+   * with bigger pixels rather than a smoother one — which is the point.
+   */
+  readonly size?: number
 }
 
 interface Projection {
@@ -69,7 +75,7 @@ function buildProjection(circuit: Circuit): Projection {
   }
 }
 
-export function Minimap({ racersRef, focusKey }: MinimapProps): React.ReactElement {
+export function Minimap({ racersRef, focusKey, size = MAP_SIZE }: MinimapProps): React.ReactElement {
   const circuit = useCircuit()
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const projection = useMemo(() => buildProjection(circuit), [circuit])
@@ -183,8 +189,8 @@ export function Minimap({ racersRef, focusKey }: MinimapProps): React.ReactEleme
       width={MAP_PIXELS}
       height={MAP_PIXELS}
       style={{
-        width: `${MAP_SIZE}px`,
-        height: `${MAP_SIZE}px`,
+        width: `${size}px`,
+        height: `${size}px`,
         imageRendering: 'pixelated',
         display: 'block',
         flex: '0 0 auto',

@@ -1,8 +1,9 @@
-// Cabinet-level chrome: the glass every channel is viewed through. Lives at
-// deck level rather than inside a channel so the CRT never blinks out during a
-// flick, and so a new channel inherits the look for free.
+// Cabinet-level chrome: the glass the whole screen is viewed through. Lives
+// here rather than inside the race so the CRT covers the windows too — a
+// leaderboard that sat outside the scanlines would read as a browser dialog
+// pasted over a console.
 
-export const DECK_STYLES = `
+export const CABINET_STYLES = `
   @keyframes scanline {
     0% { transform: translateY(-100%); }
     100% { transform: translateY(100vh); }

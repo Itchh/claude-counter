@@ -13,6 +13,7 @@ import {
   ResponsiveContainer,
 } from 'recharts'
 import { fmtTokensShort } from '@/lib/formatters'
+import { ARCADE } from './ps1/theme'
 
 const RANGES = [
   { label: '1H', ms: 60 * 60_000 },
@@ -71,7 +72,7 @@ function CustomTooltip({ active, payload, label, rangeMs }: CustomTooltipProps):
         fontSize: '11px',
       }}
     >
-      <div style={{ color: '#5e5e7e', marginBottom: 4 }}>
+      <div className="arc-meta" style={{ marginBottom: 4 }}>
         {formatTimeLabel(label, rangeMs)}
       </div>
       {payload.map((entry) => (
@@ -153,10 +154,9 @@ export function Timeline(): React.ReactElement {
           display: 'flex',
           alignItems: 'center',
           justifyContent: 'center',
-          color: '#3a3a5a',
           fontSize: 'clamp(10px, 1.2vw, 13px)',
-          fontFamily: "ui-monospace, 'Cascadia Code', monospace",
         }}
+        className="arc-meta"
       >
         COLLECTING TIMELINE DATA...
       </motion.div>
@@ -180,19 +180,21 @@ export function Timeline(): React.ReactElement {
             onClick={() => setRangeIdx(i)}
             whileHover={{ scale: 1.1 }}
             whileTap={{ scale: 0.95 }}
+            // Selected is inverted, not tinted — the kit's own way of
+            // showing which of a row of options is live.
             animate={{
-              background: i === rangeIdx ? '#2a2a4a' : 'rgba(0,0,0,0)',
-              borderColor: i === rangeIdx ? '#5e5e7e' : '#1a1a3a',
-              color: i === rangeIdx ? '#00f0ff' : '#3a3a5a',
+              background: i === rangeIdx ? ARCADE.value : 'rgba(0,0,0,0)',
+              borderColor: i === rangeIdx ? ARCADE.value : ARCADE.rule,
+              color: i === rangeIdx ? ARCADE.label : ARCADE.grey,
             }}
             transition={{ duration: 0.2 }}
             style={{
-              border: '1px solid',
+              border: '2px solid',
               padding: '2px 8px',
               fontSize: 'clamp(9px, 0.9vw, 11px)',
-              fontFamily: "ui-monospace, 'Cascadia Code', monospace",
               cursor: 'pointer',
-              letterSpacing: '0.05em',
+              letterSpacing: '0.08em',
+              textTransform: 'uppercase',
             }}
           >
             {r.label}
@@ -217,22 +219,22 @@ export function Timeline(): React.ReactElement {
                 type="number"
                 domain={[data?.since ?? 'dataMin', data?.now ?? 'dataMax']}
                 tickFormatter={(v: number) => formatTimeLabel(v, range.ms)}
-                tick={{ fill: '#3a3a5a', fontSize: 10, fontFamily: "ui-monospace, 'Cascadia Code', monospace" }}
-                axisLine={{ stroke: '#1a1a3a' }}
+                tick={{ fill: ARCADE.grey, fontSize: 10 }}
+                axisLine={{ stroke: ARCADE.rule }}
                 tickLine={false}
                 minTickGap={40}
               />
               <YAxis
                 tickFormatter={(v: number) => `${fmtTokensShort(v)}/h`}
-                tick={{ fill: '#3a3a5a', fontSize: 10, fontFamily: "ui-monospace, 'Cascadia Code', monospace" }}
-                axisLine={{ stroke: '#1a1a3a' }}
+                tick={{ fill: ARCADE.grey, fontSize: 10 }}
+                axisLine={{ stroke: ARCADE.rule }}
                 tickLine={false}
                 width={50}
                 domain={[0, 'dataMax']}
               />
               <Tooltip
                 content={<CustomTooltip rangeMs={range.ms} />}
-                cursor={{ stroke: '#2a2a4a', strokeWidth: 1 }}
+                cursor={{ stroke: ARCADE.rule, strokeWidth: 1 }}
               />
               {users.map((user, i) => (
                 <Line

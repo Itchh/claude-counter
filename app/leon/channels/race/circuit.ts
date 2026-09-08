@@ -1,4 +1,5 @@
 import * as THREE from 'three'
+import type { GroundField } from './groundField'
 import type { TrackDefinition, TrackFrame } from './tracks/types'
 
 // The circuit. A closed Catmull-Rom spline is the whole source of truth: the
@@ -14,6 +15,28 @@ import type { TrackDefinition, TrackFrame } from './tracks/types'
 
 const UP = new THREE.Vector3(0, 1, 0)
 
+/**
+ * Lift applied to a measured road surface, so wheels sit on the tarmac rather
+ * than in it. Shared, because two places have to agree about it exactly: the
+ * measurement that builds the height field, and the live ray a car uses to
+ * correct itself between the field's samples.
+ */
+export const ROAD_CLEARANCE = 0.06
+
+/**
+ * The road's measured height, sampled around the lap and across its width.
+ *
+ * `data` is row-major: `samples` rows around the lap, `slots` columns from
+ * `-extent` to `+extent` sideways off the centreline.
+ */
+export interface HeightField {
+  readonly samples: number
+  readonly slots: number
+  /** Half the measured width, in game units. */
+  readonly extent: number
+  readonly data: Float32Array
+}
+
 export interface Circuit {
   readonly definition: TrackDefinition
   readonly curve: THREE.CatmullRomCurve3
@@ -27,6 +50,16 @@ export interface Circuit {
    * like the 70-unit oval the shot was originally written for.
    */
   readonly radius: number
+  /**
+   * The middle of the lap, which is not the middle of the world.
+   *
+   * The oval was drawn around the origin, so an establishing shot could point
+   * at nothing in particular and find the race. An imported circuit sits
+   * wherever its rip put it — Bushido Peak's lap is centred sixty units off
+   * in x and its road is forty below sea level — and a shot aimed at the
+   * origin looks at the backdrop with the race off to one side.
+   */
+  readonly centre: THREE.Vector3
 
   /** Sideways offset for a lane index, in game units from the centreline. */
   laneOffset(laneIndex: number): number
@@ -71,13 +104,56 @@ export interface Circuit {
    * footprint — but its y is guesswork from a 2D grid, and on the mountain
    * rips it runs metres above or below the tarmac in places. Once the model
    * is actually loaded the truth is available for the asking, so TrackModel
-   * raycasts the road at `HEIGHT_PROFILE_SAMPLES` points around the lap and
-   * hands the result back here. Every consumer of `sample`/`sampleInto` —
-   * cars, cameras, effects, parked props — is corrected by the one call.
+   * measures the road and hands the result back here. Every consumer of
+   * `sample`/`sampleInto` — cars, cameras, effects, parked props — is
+   * corrected by the one call.
+   *
+   * The field is two-dimensional rather than one height per point on the lap.
+   * A single centreline profile is only correct for a car driving the exact
+   * centre of the road: on anything banked, cambered or climbing sideways —
+   * which is most of a mountain circuit — a car two metres out on the lane
+   * grid sat that much above or below the tarmac it was supposed to be on.
+   * Measuring across the road as well as around it is what puts the outside
+   * wheel back on the ground.
    *
    * Null clears it (a new model is about to measure its own).
    */
-  setHeightProfile(profile: Float32Array | null): void
+  setHeightField(field: HeightField | null): void
+  /**
+   * Registers the loaded circuit's ground, indexed for lookup.
+   *
+   * Everything that has to know where the world *is* rather than where the
+   * spline says it should be goes through here: the camera, so it never ends
+   * up under the tarmac or inside a hillside, the cars, so they sit on the
+   * road between the height field's samples, and the measurement that builds
+   * that field in the first place.
+   *
+   * An index rather than the model itself, because the model is a quarter of
+   * a million triangles and every one of these callers asks once a frame —
+   * see groundField.ts for what the raycasting version cost.
+   */
+  setGround(field: GroundField | null): void
+  /** True once a model has registered its ground. */
+  hasGround(): boolean
+  /**
+   * Height of the world's surface at an x/z, or NaN if nothing was found.
+   *
+   * `hintY` disambiguates: a circuit with a bridge over it has two surfaces
+   * at the same x/z, and the one that matters is whichever lies nearest the
+   * height the caller already believes it is at.
+   */
+  groundAt(x: number, z: number, hintY: number): number
+  /**
+   * Highest surface at or below `y`, or NaN if there is none.
+   *
+   * The other question, and the one a camera actually asks. `groundAt` finds
+   * the surface nearest a height you already believe, which is right for a
+   * car on a road that passes under a bridge. A camera asks something else —
+   * "am I inside the hill" — and nearest-to-hint answers that wrongly: with a
+   * hillside twenty units above the lens and a valley floor twenty-five
+   * below, the valley wins and the camera stays buried.
+   */
+  groundBelow(x: number, z: number, y: number): number
   /**
    * Road surface as a flat ribbon of quads. Only used by the procedural
    * circuit; an imported track brings its own tarmac.
@@ -113,6 +189,7 @@ export function createCircuit(definition: TrackDefinition): Circuit {
   const bounds = new THREE.Box3().setFromPoints(curve.getSpacedPoints(240))
   const size = bounds.getSize(new THREE.Vector3())
   const radius = Math.max(size.x, size.z) / 2
+  const centre = bounds.getCenter(new THREE.Vector3())
 
   // Scratch vectors, per circuit rather than per module. One circuit is live
   // at a time, but a factory that shared mutable state between its products
@@ -122,19 +199,50 @@ export function createCircuit(definition: TrackDefinition): Circuit {
 
   const laneOffset = (laneIndex: number): number => -(span / 2) + laneIndex * step
 
-  // See setHeightProfile on the interface. Read every frame by sampleInto,
+  // See setHeightField on the interface. Read every frame by sampleInto,
   // so it lives in a closure rather than behind any kind of lookup.
-  let heightProfile: Float32Array | null = null
+  let heightField: HeightField | null = null
+  let ground: GroundField | null = null
 
-  const profileHeight = (wrapped: number): number => {
-    const profile = heightProfile
-    if (!profile || profile.length === 0) return Number.NaN
-    const scaled = wrapped * profile.length
-    const index = Math.floor(scaled) % profile.length
-    const next = (index + 1) % profile.length
-    const blend = scaled - Math.floor(scaled)
-    return profile[index] * (1 - blend) + profile[next] * blend
+  /**
+   * Bilinear lookup into the measured road: around the lap, which wraps, and
+   * across it, which does not — a car pushed past the outside edge of the
+   * measured strip keeps the edge's height rather than extrapolating off a
+   * cliff it cannot see.
+   */
+  const profileHeight = (wrapped: number, lateral: number): number => {
+    const field = heightField
+    if (!field || field.data.length === 0) return Number.NaN
+
+    const { samples, slots, extent, data } = field
+    const scaledRow = wrapped * samples
+    const row = Math.floor(scaledRow) % samples
+    const nextRow = (row + 1) % samples
+    const rowBlend = scaledRow - Math.floor(scaledRow)
+
+    const scaledColumn =
+      slots > 1
+        ? ((lateral + extent) / (extent * 2)) * (slots - 1)
+        : 0
+    const clampedColumn = Math.min(Math.max(scaledColumn, 0), slots - 1)
+    const column = Math.min(Math.floor(clampedColumn), slots - 1)
+    const nextColumn = Math.min(column + 1, slots - 1)
+    const columnBlend = clampedColumn - column
+
+    const a = data[row * slots + column]
+    const b = data[row * slots + nextColumn]
+    const c = data[nextRow * slots + column]
+    const d = data[nextRow * slots + nextColumn]
+    const near = a + (b - a) * columnBlend
+    const far = c + (d - c) * columnBlend
+    return near + (far - near) * rowBlend
   }
+
+  const groundAt = (x: number, z: number, hintY: number): number =>
+    ground === null ? Number.NaN : ground.heightAt(x, z, hintY)
+
+  const groundBelow = (x: number, z: number, y: number): number =>
+    ground === null ? Number.NaN : ground.highestBelow(x, z, y)
 
   const sample = (t: number, lateral: number): TrackFrame => {
     const wrapped = ((t % 1) + 1) % 1
@@ -142,7 +250,7 @@ export function createCircuit(definition: TrackDefinition): Circuit {
     const tangent = curve.getTangentAt(wrapped).normalize()
     const normal = new THREE.Vector3().crossVectors(UP, tangent).normalize()
     position.addScaledVector(normal, lateral)
-    const measured = profileHeight(wrapped)
+    const measured = profileHeight(wrapped, lateral)
     if (!Number.isNaN(measured)) position.y = measured
     return { position, tangent, normal }
   }
@@ -188,7 +296,7 @@ export function createCircuit(definition: TrackDefinition): Circuit {
     outTangent.copy(scratchTangent).normalize()
     scratchNormal.crossVectors(UP, outTangent).normalize()
     outPosition.addScaledVector(scratchNormal, lateral)
-    const measured = profileHeight(wrapped)
+    const measured = profileHeight(wrapped, lateral)
     if (!Number.isNaN(measured)) outPosition.y = measured
   }
 
@@ -237,13 +345,20 @@ export function createCircuit(definition: TrackDefinition): Circuit {
     halfWidth,
     laneCount,
     radius,
+    centre,
     laneOffset,
     curvatureAt,
     sample,
     sampleInto,
-    setHeightProfile: (profile) => {
-      heightProfile = profile
+    setHeightField: (field) => {
+      heightField = field
     },
+    setGround: (field) => {
+      ground = field
+    },
+    hasGround: () => ground !== null,
+    groundAt,
+    groundBelow,
     buildRoadGeometry: (segments) => buildRibbon(segments, -halfWidth, halfWidth, 0),
     buildKerbGeometry: (segments, side, width, height) =>
       buildRibbon(segments, halfWidth * side, (halfWidth + width) * side, height),

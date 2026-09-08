@@ -111,6 +111,24 @@ export interface TrackDefinition {
    * of a 340-unit road course.
    */
   readonly fog: { readonly near: number; readonly far: number }
+  /**
+   * Extra scale applied to the whole venue at load, on top of the bake.
+   *
+   * The bake normalises a circuit by measuring its road and scaling until that
+   * road is `TARGET_ROAD_HALF_WIDTH` across. That measurement is only as good
+   * as the surface it measured, and on a drift circuit — where the tarmac is
+   * one large pad rather than a ribbon — it reads a road far wider than the
+   * line anybody drives, and scales the world up to match. The result is a
+   * correct-looking circuit with toy cars on it.
+   *
+   * This is the correction, and it multiplies the geometry, the traced line
+   * and the road width together, because those three are the same measurement
+   * seen from three places and a circuit where they disagree is one where the
+   * cars race beside the tarmac. A venue scaled down this way carries fewer
+   * lanes, since the lane inset is a car body and cars do not shrink with the
+   * world — see `laneCount`.
+   */
+  readonly worldScale?: number
   /** Which console's picture this circuit is rendered as. */
   readonly render: RenderProfile
   /**

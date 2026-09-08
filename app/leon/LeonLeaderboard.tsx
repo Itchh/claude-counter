@@ -2,13 +2,13 @@
 
 import { PS1, FONTS } from './ps1/theme'
 import { PS1_STYLES } from './ps1/styles'
-import { BootSplash } from './ps1/BootSplash'
-import { ChannelDeck } from './channels/ChannelDeck'
-import { DECK_STYLES } from './channels/deckStyles'
+import { TitleScreen } from './ps1/TitleScreen'
+import { Cabinet } from './cabinet/Cabinet'
+import { CABINET_STYLES } from './cabinet/cabinetStyles'
 
 // The console cabinet, and the whole product: the CRT, the boot sequence, the
-// deck. There is no other view to switch to, so this is what the page renders.
-// Channels get the screen inside it and nothing else.
+// race. There is no other view to switch to, so this is what the page renders.
+// The title screen sits on top until someone presses start.
 
 export function LeonLeaderboard(): React.ReactElement {
   return (
@@ -26,13 +26,13 @@ export function LeonLeaderboard(): React.ReactElement {
       }}
     >
       <style>{PS1_STYLES}</style>
-      <style>{DECK_STYLES}</style>
+      <style>{CABINET_STYLES}</style>
 
-      <ChannelDeck />
+      <Cabinet />
 
       <div className="crt-overlay" />
       <div className="scanline-bar" />
-      <BootSplash />
+      <TitleScreen />
     </div>
   )
 }

@@ -16,6 +16,7 @@ import {
 //
 //   ◄ ►   change channel      — owned by the deck, not by this file
 //   ▲ ▼   move the cursor     — within the live channel
+//   1-9   jump to a person    — the nth row, counted as it appears on screen
 //   ENTER open / close        — the focused item expands in place
 //   ESC   back out            — collapse, then drop the cursor entirely
 //
@@ -38,6 +39,12 @@ interface NavigationValue {
 }
 
 const NavigationContext = createContext<NavigationValue | null>(null)
+
+/**
+ * Id prefix that marks a navigable item as a person rather than as furniture.
+ * The number keys count these and nothing else.
+ */
+export const ROW_PREFIX = 'row:'
 
 export function NavigationProvider({
   children,
@@ -102,6 +109,41 @@ export function NavigationProvider({
 
     const onKey = (event: KeyboardEvent): void => {
       const { focusId: currentFocus, expandedId: currentExpanded } = state.current
+
+      // The number row picks a person. Only rows answer to it — a channel
+      // has other selectable furniture (the chart, the ticker) and "player 4"
+      // meaning the timeline would be nonsense — and the count is the order
+      // they are drawn in, so 3 is always whoever is third on screen.
+      if (/^[1-9]$/.test(event.key)) {
+        // Not the browser's own shortcuts, and not while something is being
+        // typed into. Cmd+1 switches tab on a Mac, and a deck that quietly
+        // moved its cursor behind an open window would be a deck nobody
+        // trusts — the race channel's digit handler guards the same way.
+        if (event.metaKey || event.ctrlKey || event.altKey) return
+        const typingInto = event.target as HTMLElement | null
+        if (
+          typingInto?.isContentEditable ||
+          /^(input|textarea|select)$/i.test(typingInto?.tagName ?? '')
+        ) {
+          return
+        }
+        const rows = ordered().filter((id) => id.startsWith(ROW_PREFIX))
+        const target = rows[Number(event.key) - 1]
+        if (!target) return
+        event.preventDefault()
+        onInteract?.()
+        // Pressing the same number again is the way back out: open, then
+        // closed, then the cursor stays where it is. A digit that only ever
+        // opened things would need a second key to undo it.
+        if (currentFocus === target) {
+          setExpandedId(currentExpanded === target ? null : target)
+          return
+        }
+        setFocusId(target)
+        setExpandedId(null)
+        elements.current.get(target)?.scrollIntoView({ block: 'nearest' })
+        return
+      }
 
       if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
         event.preventDefault()

@@ -48,17 +48,22 @@ function fromBaked(
   baked: BakedTrack,
   art: Pick<TrackDefinition, 'title' | 'surfaces' | 'sky'> & Partial<TrackDefinition>,
 ): TrackDefinition {
+  // See `worldScale`: the traced line has to be scaled with the geometry it
+  // was traced from, or the cars drive beside the road rather than on it.
+  const worldScale = art.worldScale ?? 1
   return {
     slug: baked.slug,
     model: `/ps1/tracks/${baked.slug}.glb`,
-    controlPoints: baked.controlPoints.map(([x, y, z]) => [x, y, z] as const),
-    roadHalfWidth: baked.roadHalfWidth,
+    controlPoints: baked.controlPoints.map(
+      ([x, y, z]) => [x * worldScale, y * worldScale, z * worldScale] as const,
+    ),
+    roadHalfWidth: baked.roadHalfWidth * worldScale,
     laneCount: 8,
     curveTension: 0.5,
     // An imported circuit brings its own barriers, fences and foliage.
     // Scattering ours on top of them puts oil drums through the grandstand.
     proceduralScenery: false,
-    fog: fogForRadius(baked.modelRadius),
+    fog: fogForRadius(baked.modelRadius * worldScale),
     // Imported circuits are the later machine: they arrive with real texture
     // pages and enough geometry to deserve them, and at 450 units across the
     // earlier machine's wobble is noise rather than signature.
@@ -148,6 +153,15 @@ const TOKEN_OVAL: TrackDefinition = {
 const DRIFT_YARD = fromBaked(driftYard as BakedTrack, {
   title: 'Drift Yard',
   sky: RACE_DAY_SKY,
+  // The one circuit whose bake measured a pad rather than a road, so it
+  // arrived scaled up by roughly the ratio between the two and put toy cars
+  // on a giant's track. See `worldScale` on TrackDefinition.
+  worldScale: 0.55,
+  // Five lanes rather than eight. The road is now 8 units across and the lane
+  // inset is a car's own body, which does not shrink with the venue: eight
+  // lanes on this circuit put the field shoulder to shoulder with the outside
+  // two hanging over the kerb.
+  laneCount: 5,
   surfaces: {
     // Daylight art direction, and almost no art direction at all: under a
     // bright sky the correct move is to get out of the model's way. The tints

@@ -3,7 +3,7 @@
 import { motion } from 'motion/react'
 import type { LeaderboardEntry } from '@/types'
 import { fmtTokensShort } from '@/lib/formatters'
-import { GT, PS1 } from './theme'
+import { ARCADE, PS1 } from './theme'
 
 // A race nobody plays. Every kart's position on the track is today's token
 // count as a share of the day's leader, so the game state is entirely a
@@ -55,7 +55,7 @@ export function RaceStrip({ entries, burnRates }: RaceStripProps): React.ReactEl
 
   return (
     <div
-      className="gt-strip"
+      className="arc-strip"
       style={{
         position: 'relative',
         height: '100%',
@@ -67,22 +67,16 @@ export function RaceStrip({ entries, burnRates }: RaceStripProps): React.ReactEl
       }}
     >
       <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', gap: '10px' }}>
-        <span
-          className="gt-label ps1-warp"
-          style={{ color: GT.label, fontSize: 'clamp(9px, 1vw, 12px)' }}
-        >
+        <span className="arc-label ps1-warp" style={{ fontSize: 'clamp(9px, 1vw, 12px)' }}>
           Stage 01 · Token Grand Prix
         </span>
-        <span
-          className="gt-label"
-          style={{ color: GT.valueDim, fontSize: 'clamp(7px, 0.8vw, 9px)' }}
-        >
+        <span className="arc-meta" style={{ fontSize: 'clamp(7px, 0.8vw, 9px)' }}>
           Auto-play / lap = tokens today
         </span>
       </div>
 
       <div
-        className="gt-inset"
+        className="arc-inset"
         style={{
           position: 'relative',
           flex: 1,
@@ -96,8 +90,8 @@ export function RaceStrip({ entries, burnRates }: RaceStripProps): React.ReactEl
       >
         {racers.length === 0 ? (
           <div
-            className="gt-label"
-            style={{ color: GT.valueDim, fontSize: 'clamp(8px, 0.9vw, 11px)', textAlign: 'center' }}
+            className="arc-meta"
+            style={{ fontSize: 'clamp(8px, 0.9vw, 11px)', textAlign: 'center' }}
           >
             Grid empty — waiting for entrants
           </div>
@@ -114,14 +108,15 @@ export function RaceStrip({ entries, burnRates }: RaceStripProps): React.ReactEl
                 flex: 1,
               }}
             >
+              {/* The position column: chrome for the leader, grey for the
+                  rest, which is how the kit ranks a list without a highlight. */}
               <span
-                className="gt-label"
+                className={index === 0 ? 'arc-chrome' : 'arc-meta'}
                 style={{
                   width: '2.5ch',
                   flex: '0 0 auto',
                   fontSize: 'clamp(7px, 0.8vw, 10px)',
                   fontVariantNumeric: 'tabular-nums',
-                  color: index === 0 ? GT.label : GT.valueDim,
                 }}
               >
                 P{index + 1}
@@ -168,20 +163,18 @@ export function RaceStrip({ entries, burnRates }: RaceStripProps): React.ReactEl
               </div>
 
               <span
-                className="gt-label"
+                className={racer.burnRate > 0 ? 'arc-value-live' : 'arc-value'}
                 style={{
                   flex: '0 0 auto',
                   width: '7ch',
                   textAlign: 'right',
                   fontSize: 'clamp(7px, 0.8vw, 10px)',
-                  fontVariantNumeric: 'tabular-nums',
-                  color: racer.burnRate > 0 ? PS1.green : GT.valueDim,
                 }}
               >
                 {fmtTokensShort(racer.tokensToday)}
               </span>
               <span
-                className="gt-label"
+                className="arc-caption"
                 style={{
                   flex: '0 0 auto',
                   width: '9ch',
@@ -189,7 +182,6 @@ export function RaceStrip({ entries, burnRates }: RaceStripProps): React.ReactEl
                   textOverflow: 'ellipsis',
                   whiteSpace: 'nowrap',
                   fontSize: 'clamp(7px, 0.8vw, 10px)',
-                  color: racer.color,
                 }}
                 title={racer.name}
               >
@@ -232,7 +224,9 @@ function Kart({ color, moving }: { color: string; moving: boolean }): React.Reac
           height: '8px',
           width: '14px',
           background: color,
-          boxShadow: `inset -2px -2px 0 0 rgba(7,7,13,0.55), 0 0 6px ${color}70`,
+          // Shaded on two edges and framed in black. The kart used to carry
+          // a halo, which is the one thing the kit has no register for.
+          boxShadow: `inset -2px -2px 0 0 rgba(7,7,13,0.55), 0 0 0 2px ${ARCADE.outline}`,
         }}
       />
       <span

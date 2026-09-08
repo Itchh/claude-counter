@@ -6,6 +6,7 @@ import { useGLTF } from '@react-three/drei'
 import * as THREE from 'three'
 import { Kart } from './Kart'
 import { useCircuit } from './CircuitContext'
+import { ROAD_CLEARANCE } from './circuit'
 import type { SimRacer } from './useRaceSim'
 
 // One kart on the track. Reads its position straight from the mutable sim
@@ -17,6 +18,9 @@ interface RacerProps {
   readonly racersRef: React.RefObject<SimRacer[]>
   /** Colour and active flag come from React; position and speed do not. */
   readonly color: string
+  /** The driver's paint shop choices. Null until they have made any. */
+  readonly paint?: string | null
+  readonly livery?: string | null
   readonly isActive: boolean
   /** Fired when the viewer clicks this car, to latch the camera onto it. */
   readonly onSelect?: () => void
@@ -34,10 +38,21 @@ const PICK_SIZE: readonly [number, number, number] = [2.6, 2, 4.4]
 /** Roll per radian of drift yaw. Small on purpose — see the frame loop. */
 const BODY_ROLL = 0.28
 
+/**
+ * How far the measured road may sit from the car's own footprint before the
+ * measurement is treated as something else — a bridge above, a tunnel below —
+ * and ignored.
+ */
+const GROUND_SNAP_BAND = 4
+/** How fast the body settles onto a newly measured surface, per second. */
+const GROUND_SNAP_SMOOTHING = 12
+
 export function Racer({
   index,
   racersRef,
   color,
+  paint = null,
+  livery = null,
   isActive,
   onSelect,
   modelUrl,
@@ -46,6 +61,17 @@ export function Racer({
   const groupRef = useRef<THREE.Group>(null)
   const position = useMemo(() => new THREE.Vector3(), [])
   const tangent = useMemo(() => new THREE.Vector3(), [])
+  /**
+   * How far the car currently sits above the height field's own answer.
+   *
+   * The correction has to be remembered, not recomputed. `sampleInto`
+   * overwrites `position` from scratch every frame, so easing the absolute
+   * height eased nothing: each frame started again from the field's value and
+   * moved a fixed fraction of the way to the measured surface, leaving the
+   * car permanently short of it — and short by a different amount at 144Hz
+   * than at 60. Keeping the offset is what makes it converge.
+   */
+  const groundOffset = useRef(0)
   // Wheel spin needs speed every frame, but re-rendering on every velocity
   // change would defeat the point of the sim living in a ref. A mutable box
   // bridges the two: the frame loop writes it, Kart's own frame loop reads it.
@@ -56,13 +82,32 @@ export function Racer({
     [],
   )
 
-  useFrame(() => {
+  useFrame((_, delta) => {
     const racer = racersRef.current?.[index]
     if (!racer || !groupRef.current) return
 
     // The car's own sideways position, not its lane. The lane is only where
     // the simulation pulls it back to once the corner lets go of it.
     circuit.sampleInto(racer.t, racer.lateral, position, tangent)
+
+    // The measured height field is sampled every few metres of road; between
+    // two samples a crest is a straight line and the tarmac is not, which is
+    // what put the nose of a car through a rise and left it hanging over a
+    // dip. So the field places the car and the model corrects it: one ray
+    // straight down at where the car actually is, accepted only if it agrees
+    // with the field about which surface we are on.
+    const ground = circuit.groundAt(position.x, position.z, position.y)
+    const wanted =
+      !Number.isNaN(ground) && Math.abs(ground - position.y) < GROUND_SNAP_BAND
+        ? ground + ROAD_CLEARANCE - position.y
+        : 0
+    // Eased, because a car that snaps to every reading is a car that
+    // vibrates: the road under a wheel changes by centimetres between frames
+    // and the eye reads the jitter long before it reads the correction.
+    groundOffset.current +=
+      (wanted - groundOffset.current) * (1 - Math.exp(-delta * GROUND_SNAP_SMOOTHING))
+    position.y += groundOffset.current
+
     groupRef.current.position.copy(position)
     // Heading along the tangent, plus the drift angle: in a slide the nose
     // points into the corner while the car travels out of it, and that
@@ -95,11 +140,29 @@ export function Racer({
         <meshBasicMaterial transparent opacity={0} depthWrite={false} />
       </mesh>
       {modelUrl ? (
-        <Suspense fallback={<Kart index={index} color={color} speedBox={speedBox} isActive={isActive} />}>
+        <Suspense
+          fallback={
+            <Kart
+              index={index}
+              color={color}
+              paint={paint}
+              livery={livery}
+              speedBox={speedBox}
+              isActive={isActive}
+            />
+          }
+        >
           <GltfKart url={modelUrl} />
         </Suspense>
       ) : (
-        <Kart index={index} color={color} speedBox={speedBox} isActive={isActive} />
+        <Kart
+          index={index}
+          color={color}
+          paint={paint}
+          livery={livery}
+          speedBox={speedBox}
+          isActive={isActive}
+        />
       )}
     </group>
   )

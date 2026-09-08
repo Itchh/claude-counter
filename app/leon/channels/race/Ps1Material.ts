@@ -45,8 +45,14 @@ const VERTEX_SHADER = /* glsl */ `
   varying vec3 vColorLinear;
   varying float vFogDepthLinear;
   varying vec2 vUvLinear;
+  // Object space, untouched. The liveries are painted in the car's own
+  // coordinates rather than in its UVs, so a pattern wraps the bodywork the
+  // way paint does instead of following whatever seams the model was
+  // unwrapped along.
+  varying vec3 vLocal;
 
   void main() {
+    vLocal = position;
     vec4 viewPosition = modelViewMatrix * vec4(position, 1.0);
     vec4 clipPosition = projectionMatrix * viewPosition;
 
@@ -105,10 +111,21 @@ const FRAGMENT_SHADER = /* glsl */ `
   uniform float uTint;
   /** Below this texture alpha the fragment is thrown away. 0 disables it. */
   uniform float uAlphaTest;
+  /** 1 lets the page's own alpha through to the framebuffer. */
+  uniform float uBlend;
   /** 1 undoes perspective correction entirely; 0 leaves it alone. */
   uniform float uAffine;
   /** Levels per channel in the output. 31 is a 15-bit framebuffer. */
   uniform float uColorLevels;
+  /** Which livery to paint on. 0 is bare paint. See lib/livery.ts. */
+  uniform float uLivery;
+  /** The driver's own colour, which every pattern's tones are mixed from. */
+  uniform vec3 uPaint;
+  /** The body's bounding box, so a pattern lands the same on every chassis. */
+  uniform vec3 uBodyMin;
+  uniform vec3 uBodySize;
+  /** How far the page is repainted in uPaint, 0..1. */
+  uniform float uPaintMix;
 
   varying vec3 vColor;
   varying float vFogDepth;
@@ -117,9 +134,94 @@ const FRAGMENT_SHADER = /* glsl */ `
   varying vec3 vColorLinear;
   varying float vFogDepthLinear;
   varying vec2 vUvLinear;
+  varying vec3 vLocal;
 
   vec3 quantizeOutput(vec3 color) {
     return floor(color * uColorLevels + 0.5) / uColorLevels;
+  }
+
+  /**
+   * The livery.
+   *
+   * Every pattern is a hard-edged mask over the car's own normalised box —
+   * t runs tail to nose, h sits on the ground and rises to the roof, w
+   * crosses it. Working in object space rather than UV space is what lets one
+   * set of patterns serve eight different chassis with eight different
+   * unwraps, and it is also why a stripe carries across the nose and over the
+   * roof rather than stopping at a seam: a curtain through the solid cuts the
+   * bodywork wherever the bodywork happens to be.
+   *
+   * Four tones only, mixed from the driver's paint so a pattern can never
+   * fight the colour it is painted over. Nothing here is anti-aliased; the
+   * console had no edge it could soften and neither has this.
+   */
+  vec4 liveryDecal() {
+    if (uLivery < 0.5) return vec4(0.0);
+
+    vec3 n = (vLocal - uBodyMin) / max(uBodySize, vec3(0.0001));
+    float t = clamp(n.z, 0.0, 1.0);
+    float h = clamp(n.y, 0.0, 1.0);
+    float w = clamp(n.x, 0.0, 1.0);
+
+    vec3 light = mix(uPaint, vec3(1.0), 0.62);
+    vec3 dark = uPaint * 0.34;
+    vec3 white = vec3(0.94);
+    vec3 ink = vec3(0.05);
+
+    if (uLivery < 1.5) {
+      // Twin stripe: a thick band with a thin one riding above it.
+      if (h > 0.30 && h < 0.385) return vec4(light, 1.0);
+      if (h > 0.405 && h < 0.44) return vec4(light, 1.0);
+      return vec4(0.0);
+    }
+    if (uLivery < 2.5) {
+      // Bolt: a chevron that drops towards the nose, shadowed underneath.
+      float edge = 0.46 - 0.26 * t;
+      if (h > edge && h < edge + 0.11) return vec4(light, 1.0);
+      if (h > edge - 0.055 && h <= edge) return vec4(dark, 1.0);
+      return vec4(0.0);
+    }
+    if (uLivery < 3.5) {
+      // Check: two rows of chequer through the waist.
+      if (h < 0.26 || h > 0.44) return vec4(0.0);
+      float cell = mod(floor(t * 18.0) + floor((h - 0.26) * 22.0), 2.0);
+      return cell < 0.5 ? vec4(white, 1.0) : vec4(0.0);
+    }
+    if (uLivery < 4.5) {
+      // Split: the nose taken in the light tone, on a hard diagonal.
+      if (t > 0.58 + h * 0.16) return vec4(light, 1.0);
+      if (t > 0.54 + h * 0.16) return vec4(ink, 1.0);
+      return vec4(0.0);
+    }
+    if (uLivery < 5.5) {
+      // Roundel: a door plate, with a rule running fore and aft of it.
+      vec2 d = vec2((t - 0.46) * 1.6, h - 0.40);
+      if (dot(d, d) < 0.0125) return vec4(white, 1.0);
+      if (h > 0.30 && h < 0.325 && (t < 0.34 || t > 0.58)) return vec4(dark, 1.0);
+      return vec4(0.0);
+    }
+    if (uLivery < 6.5) {
+      // Pinstripe: two hairlines high on the flank, one light one below.
+      if (h > 0.505 && h < 0.522) return vec4(ink, 1.0);
+      if (h > 0.478 && h < 0.495) return vec4(ink, 1.0);
+      if (h > 0.30 && h < 0.318) return vec4(light, 1.0);
+      return vec4(0.0);
+    }
+    if (uLivery < 7.5) {
+      // Blocks: six of them, stepping up towards the tail.
+      float column = floor(t * 6.0);
+      float base = 0.22 + column * 0.035;
+      if (mod(t * 6.0, 1.0) > 0.72) return vec4(0.0);
+      if (h > base && h < base + 0.075) {
+        return mod(column, 2.0) < 0.5 ? vec4(light, 1.0) : vec4(ink, 1.0);
+      }
+      return vec4(0.0);
+    }
+    // Spine: over the roof, nose to tail. The pattern that only makes sense
+    // in three dimensions, and the reason the paint shop turns the car.
+    if (abs(w - 0.5) < 0.085 && h > 0.30) return vec4(light, 1.0);
+    if (abs(w - 0.5) < 0.115 && h > 0.30) return vec4(dark, 1.0);
+    return vec4(0.0);
   }
 
   void main() {
@@ -138,7 +240,25 @@ const FRAGMENT_SHADER = /* glsl */ `
     // wrong mip. The result is mixed out instead.
     vec4 texel = texture2D(uMap, uv);
     vec3 sampled = texel.rgb * mix(vec3(1.0), uColor, uTint);
+
+    // Repainting, for a car whose driver has chosen a colour.
+    //
+    // A multiply tint was the first attempt and it does not work: multiplying
+    // a dark blue page by cyan gives a darker blue-grey, so eight bright
+    // paints arrived on screen as eight shades of the page. This keeps the
+    // page's own luminance — every shut line, lamp and painted-in shadow
+    // survives as a light or dark version of the new colour — and takes the
+    // hue from the driver. Which is what a respray is.
+    float luma = dot(sampled, vec3(0.299, 0.587, 0.114));
+    vec3 repainted = uPaint * clamp(luma * 1.7, 0.0, 1.35);
+    sampled = mix(sampled, repainted, uPaintMix);
     vec3 base = mix(uColor, sampled, uUseMap);
+
+    // The livery goes on over the paint and under the lighting, which is
+    // where paint sits on a real car: it takes the same shade, the same fog
+    // and the same 15-bit quantisation as the panel beneath it.
+    vec4 decal = liveryDecal();
+    base = mix(base, decal.rgb, decal.a);
 
     // Cut-out transparency, which is the only kind the hardware had. Foliage,
     // fences and signage were all drawn as flat cards with a masked texture,
@@ -151,7 +271,12 @@ const FRAGMENT_SHADER = /* glsl */ `
     vec3 lit = base * (shade + uEmissive);
     float fogAmount = smoothstep(uFogNear, uFogFar, fogDepth);
     vec3 fogged = mix(lit, uFogColor, fogAmount);
-    gl_FragColor = vec4(fogged, 1.0);
+    // Opaque unless the surface asked otherwise. uBlend is the one concession
+    // to a source asset that draws its foliage with real transparency: the
+    // console's own answer was a dither mask, but a downloaded circuit's
+    // pages are authored with soft edges and masking them alone leaves the
+    // half-transparent parts of a leaf card standing as solid slabs.
+    gl_FragColor = vec4(fogged, mix(1.0, texel.a, uBlend * uUseMap));
 
     // Convert from the renderer's linear working space to the display's.
     //
@@ -187,6 +312,17 @@ export interface Ps1MaterialOptions {
    */
   readonly alphaTest?: number
   /**
+   * Let the page's own alpha reach the framebuffer, rather than cutting the
+   * fragment out and drawing the rest solid.
+   *
+   * Reserved for surfaces a downloaded model declares as blended — modern
+   * foliage is drawn with soft edges, and a threshold alone turns the soft
+   * half of every leaf card into a slab. It costs depth writes, so the
+   * surface no longer occludes correctly; that is why it is opt-in per
+   * material rather than a mode the whole scene runs in.
+   */
+  readonly blend?: boolean
+  /**
    * How far a textured surface is pulled towards `color`, 0..1. The cars
    * carry their own liveries, so this stays low: enough that a driver's
    * colour is findable on the track, not so much that the paintwork goes.
@@ -194,6 +330,25 @@ export interface Ps1MaterialOptions {
   readonly tint?: number
   readonly ambient?: number
   readonly side?: THREE.Side
+  /**
+   * Paint a livery on this surface, in the car's own object space.
+   *
+   * Only the car bodies pass one. `bounds` is the body geometry's own
+   * bounding box — passed in rather than assumed, because the pack's chassis
+   * are different sizes and a pattern measured against the wrong box slides
+   * off the back of the shorter ones.
+   */
+  readonly livery?: {
+    readonly pattern: number
+    readonly paint: THREE.ColorRepresentation
+    readonly bounds: THREE.Box3
+    /**
+     * How far the page is repainted in `paint`, 0..1. Zero leaves the pack's
+     * own paint job exactly as the artist mixed it, which is where every car
+     * starts and where it stays until someone opens the paint shop.
+     */
+    readonly paintStrength?: number
+  }
 }
 
 const DEFAULT_AMBIENT = 0.35
@@ -298,6 +453,11 @@ export function createPs1Material(options: Ps1MaterialOptions): THREE.ShaderMate
     vertexShader: VERTEX_SHADER,
     fragmentShader: FRAGMENT_SHADER,
     side: options.side ?? THREE.FrontSide,
+    transparent: options.blend === true,
+    // A blended surface must not write depth, or the first card drawn paints
+    // a hole in everything behind it. Three sorts these back to front for us,
+    // which is as close to correct as an unsorted era ever got.
+    depthWrite: options.blend !== true,
     uniforms: {
       uColor: { value: new THREE.Color(options.color) },
       // Fog matches the backdrop's middle stop, so geometry dissolves into
@@ -314,10 +474,22 @@ export function createPs1Material(options: Ps1MaterialOptions): THREE.ShaderMate
       uUseMap: { value: options.map ? 1 : 0 },
       uTint: { value: options.tint ?? 0 },
       uAlphaTest: { value: options.alphaTest ?? 0 },
+      uBlend: { value: options.blend ? 1 : 0 },
       uJitterGrid: sharedJitterGrid,
       uJitterStrength: sharedJitterStrength,
       uAffine: sharedAffine,
       uColorLevels: sharedColorLevels,
+      uLivery: { value: options.livery?.pattern ?? 0 },
+      uPaintMix: { value: options.livery?.paintStrength ?? 0 },
+      uPaint: { value: new THREE.Color(options.livery?.paint ?? '#ffffff') },
+      uBodyMin: {
+        value: options.livery ? options.livery.bounds.min.clone() : new THREE.Vector3(0, 0, 0),
+      },
+      uBodySize: {
+        value: options.livery
+          ? options.livery.bounds.getSize(new THREE.Vector3())
+          : new THREE.Vector3(1, 1, 1),
+      },
       uAmbient: { value: options.ambient ?? DEFAULT_AMBIENT },
       uLightDirection: { value: new THREE.Vector3(0.4, 1, 0.25).normalize() },
     },
