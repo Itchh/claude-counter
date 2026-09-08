@@ -3,7 +3,7 @@
 import { motion } from 'motion/react'
 import type { LeaderboardEntry } from '@/types'
 import { fmtTokensShort } from '@/lib/formatters'
-import { PS1 } from './theme'
+import { GT, PS1 } from './theme'
 
 // A race nobody plays. Every kart's position on the track is today's token
 // count as a share of the day's leader, so the game state is entirely a
@@ -55,7 +55,7 @@ export function RaceStrip({ entries, burnRates }: RaceStripProps): React.ReactEl
 
   return (
     <div
-      className="ps1-panel ps1-dither"
+      className="gt-strip"
       style={{
         position: 'relative',
         height: '100%',
@@ -68,21 +68,21 @@ export function RaceStrip({ entries, burnRates }: RaceStripProps): React.ReactEl
     >
       <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', gap: '10px' }}>
         <span
-          className="ps1-plate ps1-warp"
-          style={{ color: PS1.gold, fontSize: 'clamp(8px, 0.95vw, 11px)' }}
+          className="gt-label ps1-warp"
+          style={{ color: GT.label, fontSize: 'clamp(9px, 1vw, 12px)' }}
         >
-          Stage 01 — Token Grand Prix
+          Stage 01 · Token Grand Prix
         </span>
         <span
-          className="ps1-plate"
-          style={{ color: PS1.textFaint, fontSize: 'clamp(7px, 0.8vw, 9px)' }}
+          className="gt-label"
+          style={{ color: GT.valueDim, fontSize: 'clamp(7px, 0.8vw, 9px)' }}
         >
           Auto-play / lap = tokens today
         </span>
       </div>
 
       <div
-        className="ps1-panel-inset"
+        className="gt-inset"
         style={{
           position: 'relative',
           flex: 1,
@@ -96,8 +96,8 @@ export function RaceStrip({ entries, burnRates }: RaceStripProps): React.ReactEl
       >
         {racers.length === 0 ? (
           <div
-            className="ps1-plate"
-            style={{ color: PS1.textFaint, fontSize: 'clamp(8px, 0.9vw, 11px)', textAlign: 'center' }}
+            className="gt-label"
+            style={{ color: GT.valueDim, fontSize: 'clamp(8px, 0.9vw, 11px)', textAlign: 'center' }}
           >
             Grid empty — waiting for entrants
           </div>
@@ -115,13 +115,13 @@ export function RaceStrip({ entries, burnRates }: RaceStripProps): React.ReactEl
               }}
             >
               <span
-                className="ps1-plate"
+                className="gt-label"
                 style={{
                   width: '2.5ch',
                   flex: '0 0 auto',
                   fontSize: 'clamp(7px, 0.8vw, 10px)',
                   fontVariantNumeric: 'tabular-nums',
-                  color: index === 0 ? PS1.gold : PS1.textFaint,
+                  color: index === 0 ? GT.label : GT.valueDim,
                 }}
               >
                 P{index + 1}
@@ -168,20 +168,20 @@ export function RaceStrip({ entries, burnRates }: RaceStripProps): React.ReactEl
               </div>
 
               <span
-                className="ps1-plate"
+                className="gt-label"
                 style={{
                   flex: '0 0 auto',
                   width: '7ch',
                   textAlign: 'right',
                   fontSize: 'clamp(7px, 0.8vw, 10px)',
                   fontVariantNumeric: 'tabular-nums',
-                  color: racer.burnRate > 0 ? PS1.green : PS1.textFaint,
+                  color: racer.burnRate > 0 ? PS1.green : GT.valueDim,
                 }}
               >
                 {fmtTokensShort(racer.tokensToday)}
               </span>
               <span
-                className="ps1-plate"
+                className="gt-label"
                 style={{
                   flex: '0 0 auto',
                   width: '9ch',

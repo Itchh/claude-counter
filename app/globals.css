@@ -1,11 +1,7 @@
 @import "tailwindcss";
 
-@theme {
-  --animate-ticker-scroll: tickerScroll 40s linear infinite;
-  --animate-screen-shake: screenShake 0.6s ease-in-out;
-  --animate-hot-flicker: hotFlicker 1.4s infinite;
-}
-
+/* Named animations, driven from inline `animation:` declarations in the
+   cabinet's components rather than through utility classes. */
 @keyframes tickerScroll {
   from { transform: translateX(0); }
   to { transform: translateX(-50%); }

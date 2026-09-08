@@ -17,8 +17,8 @@ import {
 import { Timeline } from '../Timeline'
 import { Ticker } from '../Ticker'
 import { Toasts } from '../Toasts'
-import { ReporterPanel } from '../ReporterPanel'
-import { PS1, FONTS, toPowerStats, type PowerStats } from '../ps1/theme'
+import { GT, PS1, FONTS, toPowerStats, type PowerStats } from '../ps1/theme'
+import { SCALED_SURFACE } from '../ps1/hudScale'
 import { useNavItem } from '../ps1/navigation'
 import { Ps1Avatar } from '../ps1/Ps1Avatar'
 import { RaceStrip } from '../ps1/RaceStrip'
@@ -150,8 +150,8 @@ function StatPlate({
       }}
     >
       <span
-        className="ps1-plate"
-        style={{ fontSize: 'clamp(6px, 0.7vw, 9px)', color: PS1.textFaint }}
+        className="gt-label"
+        style={{ fontSize: 'clamp(7px, 0.8vw, 10px)', color: GT.label }}
       >
         {label}
       </span>
@@ -325,12 +325,11 @@ export function StandingsChannel({ isLive }: ChannelProps): React.ReactElement {
         fontFamily: FONTS.hud,
         background: PS1.void,
         color: PS1.text,
-        height: '100%',
-        width: '100%',
         display: 'grid',
         gridTemplateRows: 'auto 1fr auto auto auto',
         overflow: 'hidden',
         position: 'relative',
+        ...SCALED_SURFACE,
       }}
     >
       <style>{STYLES}</style>
@@ -363,7 +362,7 @@ export function StandingsChannel({ isLive }: ChannelProps): React.ReactElement {
         initial={{ opacity: 0, y: -10 }}
         animate={{ opacity: 1, y: 0 }}
         transition={{ duration: 0.5 }}
-        className="ps1-panel ps1-dither"
+        className="gt-bar-top"
         style={{
           position: 'relative',
           zIndex: 2,
@@ -376,26 +375,32 @@ export function StandingsChannel({ isLive }: ChannelProps): React.ReactElement {
       >
         <div style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
           <span
-            className="ps1-plate ps1-warp"
+            className="gt-label ps1-warp"
             style={{
               fontFamily: FONTS.codec,
               fontSize: 'clamp(11px, 1.3vw, 16px)',
-              color: PS1.gold,
+              color: GT.label,
               animation: 'glitch 8s infinite',
             }}
           >
             Season One / Claude Leaderboard
           </span>
         </div>
-        <span
-          className="ps1-plate"
-          style={{
-            fontSize: 'clamp(10px, 1.2vw, 14px)',
-            color: PS1.textDim,
-            fontVariantNumeric: 'tabular-nums',
-          }}
-        >
-          {clock}
+        {/* The clock is an instrument, so it is drawn as one. */}
+        <span className="gt-stack" style={{ alignItems: 'flex-end' }}>
+          <span className="gt-label" style={{ fontSize: '11px', color: GT.label }}>
+            Session clock
+          </span>
+          <span
+            style={{
+              fontSize: 'clamp(12px, 1.4vw, 17px)',
+              color: GT.value,
+              fontVariantNumeric: 'tabular-nums',
+              textShadow: '1px 1px 0 rgba(0,0,0,0.9)',
+            }}
+          >
+            {clock}
+          </span>
         </span>
       </motion.div>
 
@@ -490,48 +495,75 @@ export function StandingsChannel({ isLive }: ChannelProps): React.ReactElement {
       <Ticker events={events} />
 
       {/* REPORTER MAINTENANCE */}
-      <ReporterPanel />
 
       {/* BOTTOM BAR */}
       <motion.div
         initial={{ opacity: 0 }}
         animate={{ opacity: 1 }}
         transition={{ duration: 0.5, delay: 0.4 }}
-        className="ps1-panel ps1-dither ps1-plate"
+        className="gt-bar"
         style={{
           position: 'relative',
           zIndex: 2,
-          padding: '10px 28px',
+          padding: '12px 28px',
           display: 'flex',
           justifyContent: 'space-between',
           alignItems: 'center',
-          fontSize: 'clamp(10px, 1.2vw, 14px)',
         }}
       >
-        <span style={{ color: PS1.textDim }}>
-          Pot: <AnimatedTokens value={data?.totalTokens ?? 0} formatter={fmtTokens} /> tokens
+        {/* Three instruments, not three sentences. Each is a gold label over
+            a white value, which is the only pattern the console bar knows —
+            and it is what lets the eye find the pot without reading. */}
+        <span className="gt-stack">
+          <span className="gt-label" style={{ fontSize: '12px', color: GT.label }}>
+            Pot
+          </span>
+          <span
+            style={{
+              fontSize: 'clamp(13px, 1.5vw, 19px)',
+              color: GT.value,
+              fontVariantNumeric: 'tabular-nums',
+              textShadow: '1px 1px 0 rgba(0,0,0,0.9)',
+            }}
+          >
+            <AnimatedTokens value={data?.totalTokens ?? 0} formatter={fmtTokens} />
+          </span>
         </span>
 
-        <span style={{ color: PS1.textFaint }}>
-          {!data ? (
-            'Linking…'
-          ) : (
-            <>
-              <span style={{ animation: 'blink 1.2s step-end infinite' }}>_</span>{' '}
-              Syncing live
-            </>
-          )}
+        <span className="gt-stack" style={{ alignItems: 'center' }}>
+          <span className="gt-label" style={{ fontSize: '12px', color: GT.label }}>
+            Link
+          </span>
+          <span
+            className="gt-label"
+            style={{ fontSize: 'clamp(11px, 1.2vw, 15px)', color: data ? PS1.green : GT.valueDim }}
+          >
+            {!data ? (
+              'Linking…'
+            ) : (
+              <>
+                <span style={{ animation: 'blink 1.2s step-end infinite' }}>_</span> Syncing live
+              </>
+            )}
+          </span>
         </span>
 
-        <motion.span
-          animate={{
-            color: justRefreshed ? PS1.hot : PS1.textDim,
-            textShadow: justRefreshed ? `0 0 10px ${PS1.hot}80` : '0 0 0px transparent',
-          }}
-          transition={{ duration: 0.5 }}
-        >
-          Saved {data ? fmtTime(data.updatedAt) : '--:--:--'}
-        </motion.span>
+        <span className="gt-stack" style={{ alignItems: 'flex-end' }}>
+          <span className="gt-label" style={{ fontSize: '12px', color: GT.label }}>
+            Saved
+          </span>
+          <motion.span
+            animate={{ color: justRefreshed ? PS1.hot : GT.value }}
+            transition={{ duration: 0.5 }}
+            style={{
+              fontSize: 'clamp(13px, 1.5vw, 19px)',
+              fontVariantNumeric: 'tabular-nums',
+              textShadow: '1px 1px 0 rgba(0,0,0,0.9)',
+            }}
+          >
+            {data ? fmtTime(data.updatedAt) : '--:--:--'}
+          </motion.span>
+        </span>
       </motion.div>
     </div>
   )
@@ -587,7 +619,7 @@ function StandingRow({
                   }}
                   whileHover={{ scale: 1.005, transition: { duration: 0.15 } }}
                   className={[
-                    'ps1-panel',
+                    'gt-row',
                     'relative',
                     'ps1-cursor',
                     nav.isFocused ? 'ps1-cursor-on' : '',
@@ -614,7 +646,7 @@ function StandingRow({
                   >
                   {/* CHARACTER PORTRAIT */}
                   <div
-                    className="ps1-panel-inset"
+                    className="gt-inset"
                     style={{
                       position: 'relative',
                       flex: '0 0 auto',
@@ -639,8 +671,8 @@ function StandingRow({
                         fontSize: '8px',
                         lineHeight: 1.4,
                         fontVariantNumeric: 'tabular-nums',
-                        background: PS1.void,
-                        color: PS1.gold,
+                        background: '#04040a',
+                        color: GT.label,
                       }}
                     >
                       LV{stats.level}

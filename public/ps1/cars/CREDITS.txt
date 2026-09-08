@@ -1,2 +1,10 @@
 PSX Style Cars by GGBot — https://ggbot.itch.io/
 Used under the terms supplied with the August 2023 asset pack.
+
+From the pack:
+- car1-8.obj + livery textures (base pages and the colour variants in variants/)
+- car5_police.obj, car5_taxi.obj — special-body variants, parked trackside
+- wheel.obj + wheel.png — the pack's standalone wheel, instanced live per car
+- shadow-blob.png — the pack’s ground-blob shadow (car_shadow.png, unmodified)
+- The engine loops, start-up, turn-off, acceleration and horn sounds in
+  /ps1/sounds/ are the pack's own "Sound effects" files, unmodified.

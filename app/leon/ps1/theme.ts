@@ -36,6 +36,84 @@ export const PS1 = {
   red: '#ff4d4d',
 } as const
 
+/**
+ * The arcade-sim HUD palette, taken from the late-90s console racers rather
+ * than from the menu chrome above.
+ *
+ * Those games ran two visual registers at once and never mixed them: the menus
+ * were blue bevelled boxes, but the in-race HUD was a black console bar tinted
+ * green at the foot of the screen, carrying gold condensed labels, white
+ * numerals, an amber LCD speed readout and a real analogue dial. That split is
+ * why a race screen of the period reads as instrumentation and a menu reads as
+ * furniture — so both palettes live here side by side, and a component picks
+ * the one that matches its job.
+ */
+export const GT = {
+  /** The console bar: black at the top edge, tinted green at the bottom. */
+  barTop: '#04040a',
+  barMid: '#071408',
+  barBottom: '#123a17',
+  /** Hairline that separates the bar from the picture above it. */
+  barEdge: '#8f8f9c',
+  /** Condensed caps that name a readout. Never used for a value. */
+  label: '#ffb020',
+  /** Numerals. Paper white, because the label carries the colour. */
+  value: '#f4f4f8',
+  valueDim: '#9a9aa6',
+  /** Amber LCD: lit segments, and the unlit bed they sit in. */
+  lcd: '#ff8c1a',
+  lcdBed: '#241a06',
+  /** Bevelled metal for gear boxes and status chips. */
+  metalHi: '#c9c9d4',
+  metalFace: '#5a5a66',
+  metalLo: '#1c1c22',
+  /** The map: a plain white line drawing, no fill, no glow. */
+  mapLine: '#f4f4f8',
+  mapMarker: '#3b6dff',
+  /** The tachometer. */
+  dialFace: '#0b0b10',
+  dialRim: '#a8a8b6',
+  dialTick: '#e6e6ee',
+  needle: '#ff6a1a',
+  redline: '#d21f1f',
+} as const
+
+/**
+ * Dusk backdrop for the 3D channels. The era's racers almost never rendered a
+ * black void: the far plane was hidden behind a painted sky that the fog
+ * colour matched exactly, so geometry dissolved into the horizon instead of
+ * ending at it. These three stops are that sky, and PS1.fog is sampled from
+ * the middle one — change one and change the other.
+ */
+export const PS1_SKY = {
+  high: '#100a2e',
+  mid: '#4a1f63',
+  horizon: '#c8438b',
+  glow: '#ff9d4d',
+} as const
+
+/**
+ * Type scale for the 3D channels, in pixels.
+ *
+ * Deliberately fixed rather than viewport-relative. The old `clamp(9px,
+ * 1.1vw, 13px)` pattern hit its ceiling almost immediately, so a wall-sized
+ * display rendered exactly the same 13px as a laptop — the bigger the screen,
+ * the smaller the type read. Fixed sizes with real steps between them give
+ * the HUD an actual hierarchy, and the room reads it from across the office.
+ */
+export const PS1_TYPE = {
+  /** Lap count. The one number visible from the far end of the room. */
+  display: 44,
+  /** Channel and stage idents. */
+  title: 22,
+  /** Driver names in the tower, POV ident. */
+  body: 18,
+  /** Scores, positions, secondary readouts. */
+  label: 14,
+  /** Units, footnotes, anything that only matters up close. */
+  micro: 12,
+} as const
+
 /** 15-bit colour: 5 bits per channel, exactly as the console's framebuffer. */
 const COLOR_LEVELS = 32
 const CHANNEL_MAX = 255

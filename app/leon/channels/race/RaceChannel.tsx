@@ -1,7 +1,8 @@
 'use client'
 
 import { Suspense, lazy } from 'react'
-import { PS1 } from '../../ps1/theme'
+import { GT, PS1, PS1_TYPE } from '../../ps1/theme'
+import { SCALED_SURFACE } from '../../ps1/hudScale'
 import type { ChannelProps } from '../ChannelRegistry'
 
 // three/R3F is ~600kb, so it is loaded only when this channel is first tuned
@@ -25,45 +26,49 @@ export function RaceChannel(props: ChannelProps): React.ReactElement {
 
 /**
  * Occupies exactly the same regions as the loaded scene — full-bleed canvas,
- * tower top-left, readouts bottom — so nothing shifts when 3D arrives.
+ * slanted tower down the left, console bar across the foot — so nothing
+ * shifts when 3D arrives. The bar in particular is 156px whether or not the
+ * instruments have anything to say yet.
  */
 function RaceSkeleton(): React.ReactElement {
   return (
-    <div style={{ position: 'relative', height: '100%', width: '100%', background: PS1.void }}>
+    <div
+      style={{ position: 'relative', background: PS1.void, ...SCALED_SURFACE }}
+    >
       <div className="ps1-floor" />
 
       <div style={{ position: 'absolute', top: '14px', left: '18px' }}>
-        <span
-          className="ps1-plate"
-          style={{ fontSize: 'clamp(9px, 1.1vw, 13px)', color: PS1.gold, opacity: 0.5 }}
-        >
-          Stage 01 — Token Grand Prix
+        <span className="gt-ident">
+          <span
+            className="gt-label"
+            style={{ fontSize: `${PS1_TYPE.title}px`, color: GT.label, opacity: 0.6 }}
+          >
+            Stage 01 · Token Grand Prix
+          </span>
         </span>
       </div>
 
       <div
-        className="ps1-panel"
         style={{
           position: 'absolute',
           left: '18px',
-          top: '46px',
-          minWidth: 'clamp(190px, 21vw, 260px)',
-          padding: '8px 10px',
+          top: '58px',
+          minWidth: '320px',
           display: 'flex',
           flexDirection: 'column',
-          gap: '5px',
+          gap: '3px',
         }}
       >
         {Array.from({ length: 6 }, (_, i) => (
-          <div key={i} style={{ display: 'flex', alignItems: 'center', gap: '8px', height: '14px' }}>
+          <div key={i} className="gt-tower-row" style={{ height: '26px', opacity: 0.5 }}>
             <span
-              className="ps1-plate"
-              style={{ width: '3ch', fontSize: 'clamp(8px, 0.9vw, 11px)', color: PS1.textFaint }}
+              className="gt-label"
+              style={{ width: '3ch', fontSize: `${PS1_TYPE.label}px`, color: GT.valueDim }}
             >
               P{i + 1}
             </span>
-            <span style={{ width: '10px', height: '10px', background: PS1.panelDeep }} />
-            <span style={{ flex: 1, height: '7px', background: PS1.panelDeep }} />
+            <span style={{ width: '10px', height: '10px', background: '#2c2c34' }} />
+            <span style={{ flex: 1, height: '7px', background: '#2c2c34' }} />
           </div>
         ))}
       </div>
@@ -77,13 +82,21 @@ function RaceSkeleton(): React.ReactElement {
           justifyContent: 'center',
         }}
       >
-        <span
-          className="ps1-plate"
-          style={{ color: PS1.textDim, fontSize: 'clamp(10px, 1.2vw, 14px)' }}
-        >
+        <span className="gt-label" style={{ color: GT.valueDim, fontSize: `${PS1_TYPE.body}px` }}>
           <span style={{ animation: 'blink 1.2s step-end infinite' }}>_</span> Loading circuit
         </span>
       </div>
+
+      <div
+        className="gt-bar"
+        style={{
+          position: 'absolute',
+          left: 0,
+          right: 0,
+          bottom: 0,
+          height: '156px',
+        }}
+      />
     </div>
   )
 }

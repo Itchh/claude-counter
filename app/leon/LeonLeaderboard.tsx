@@ -1,15 +1,14 @@
 'use client'
 
-import { ModeToggle } from '../ModeToggle'
 import { PS1, FONTS } from './ps1/theme'
 import { PS1_STYLES } from './ps1/styles'
 import { BootSplash } from './ps1/BootSplash'
 import { ChannelDeck } from './channels/ChannelDeck'
 import { DECK_STYLES } from './channels/deckStyles'
 
-// The console cabinet. Everything here is glass and chrome that sits over
-// *every* channel — the CRT, the boot sequence, the mode toggle. Channels get
-// the screen inside it and nothing else.
+// The console cabinet, and the whole product: the CRT, the boot sequence, the
+// deck. There is no other view to switch to, so this is what the page renders.
+// Channels get the screen inside it and nothing else.
 
 export function LeonLeaderboard(): React.ReactElement {
   return (
@@ -34,13 +33,6 @@ export function LeonLeaderboard(): React.ReactElement {
       <div className="crt-overlay" />
       <div className="scanline-bar" />
       <BootSplash />
-
-      {/* Tucked under the channel ident, which every channel already keeps
-          clear. Bottom corners are contested: CH 01 puts its lap counter and
-          totals there, CH 02 its status bar. */}
-      <div style={{ position: 'absolute', top: '74px', right: '18px', zIndex: 82 }}>
-        <ModeToggle />
-      </div>
     </div>
   )
 }
