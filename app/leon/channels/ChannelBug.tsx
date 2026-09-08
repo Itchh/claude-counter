@@ -2,7 +2,8 @@
 
 import { motion } from 'motion/react'
 import { CHANNELS, channelNumber } from './ChannelRegistry'
-import { PS1 } from '../ps1/theme'
+import { GT } from '../ps1/theme'
+import { SCALED_CHROME } from '../ps1/hudScale'
 
 // The corner ident, borrowed wholesale from broadcast television: channel
 // number, channel name, and a dwell bar that quietly tells the room how long
@@ -34,41 +35,36 @@ export function ChannelBug({
         flexDirection: 'column',
         alignItems: 'flex-end',
         gap: '4px',
+        ...SCALED_CHROME,
       }}
     >
-      <div
-        className="ps1-panel"
-        style={{
-          display: 'flex',
-          alignItems: 'center',
-          gap: '8px',
-          padding: '4px 9px',
-        }}
-      >
+      {/* Cut like the idents on the picture itself, so the cabinet's own
+          chrome and the channel's chrome are drawn in one hand. */}
+      <span className="gt-ident" style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
         <span
-          className="ps1-plate"
+          className="gt-label"
           style={{
-            fontSize: 'clamp(9px, 1vw, 12px)',
-            color: PS1.gold,
+            fontSize: 'clamp(10px, 1.1vw, 13px)',
+            color: GT.label,
             fontVariantNumeric: 'tabular-nums',
           }}
         >
           CH {channelNumber(index)}
         </span>
         <span
-          className="ps1-plate"
-          style={{ fontSize: 'clamp(8px, 0.9vw, 11px)', color: PS1.textDim }}
+          className="gt-label"
+          style={{ fontSize: 'clamp(9px, 1vw, 12px)', color: GT.value }}
         >
           {name}
         </span>
-      </div>
+      </span>
 
       <div
         style={{
           width: '92px',
           height: '3px',
-          background: PS1.panelDeep,
-          boxShadow: 'inset 1px 1px 0 0 #0a0a18',
+          background: '#05050a',
+          boxShadow: 'inset 1px 1px 0 0 #000',
         }}
       >
         <motion.div
@@ -76,13 +72,13 @@ export function ChannelBug({
           initial={{ width: '100%' }}
           animate={{ width: '0%' }}
           transition={{ duration: dwellSeconds, ease: 'linear' }}
-          style={{ height: '100%', background: PS1.cyan, opacity: 0.55 }}
+          style={{ height: '100%', background: GT.label, opacity: 0.7 }}
         />
       </div>
 
       <span
-        className="ps1-plate"
-        style={{ fontSize: '7px', color: PS1.textFaint, letterSpacing: '0.18em' }}
+        className="gt-label"
+        style={{ fontSize: '8px', color: GT.valueDim, letterSpacing: '0.18em' }}
       >
         ←/→ or 1–{CHANNELS.length}
       </span>

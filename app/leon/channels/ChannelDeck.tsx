@@ -5,6 +5,7 @@ import { AnimatePresence, motion } from 'motion/react'
 import type { ComponentType } from 'react'
 import { CHANNELS, channelAt, type ChannelProps } from './ChannelRegistry'
 import { ChannelBug } from './ChannelBug'
+import { ReporterPanel } from '../ReporterPanel'
 import { NavigationProvider, useNavigationState } from '../ps1/navigation'
 import {
   ControlHintBar,
@@ -13,6 +14,7 @@ import {
   type ControlHint,
 } from '../ps1/ControlHints'
 import { PS1 } from '../ps1/theme'
+import { SCALED_CHROME } from '../ps1/hudScale'
 
 // The deck is the console: it owns which channel is live, how long it rests
 // there, and the wipe between them. Channels themselves know nothing about
@@ -115,6 +117,7 @@ export function ChannelDeck(): React.ReactElement {
             channelName={channel.name}
             index={index}
             dwellSeconds={dwellSeconds}
+            footHeight={channel.footHeight}
             wipeKey={wipeKey}
             Live={Live}
           />
@@ -134,6 +137,7 @@ function DeckContents({
   channelName,
   index,
   dwellSeconds,
+  footHeight,
   wipeKey,
   Live,
 }: {
@@ -141,6 +145,7 @@ function DeckContents({
   readonly channelName: string
   readonly index: number
   readonly dwellSeconds: number
+  readonly footHeight: number
   readonly wipeKey: number
   readonly Live: ComponentType<ChannelProps> | undefined
 }): React.ReactElement {
@@ -169,6 +174,12 @@ function DeckContents({
 
       <DeckHints />
 
+      {/* Cabinet-level, not channel-level. It used to hang off CH 02, which
+          meant the one instruction a newcomer needs was only on screen for
+          part of the rotation — and on the wrong corner, underneath the
+          channel ident. */}
+      <ReporterPanel />
+
       {/* Bottom-left is the only corner no channel claims: CH 01 keeps its
           lap counter bottom-right, CH 02 its status bar across the foot. */}
       <div
@@ -178,6 +189,7 @@ function DeckContents({
           bottom: '22px',
           zIndex: 84,
           pointerEvents: 'none',
+          ...SCALED_CHROME,
         }}
       >
         <ControlHintBar />
@@ -269,6 +281,7 @@ function ChannelTuning({ name }: { name: string }): React.ReactElement {
         alignItems: 'center',
         justifyContent: 'center',
         background: PS1.void,
+        ...SCALED_CHROME,
       }}
     >
       <span

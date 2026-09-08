@@ -26,15 +26,102 @@ export function carModelFor(index: number): CarModel {
   return CAR_MODELS[((index % CAR_MODELS.length) + CAR_MODELS.length) % CAR_MODELS.length]
 }
 
+/** The shared wheel and the ground-blob shadow, from the same pack. */
+export const WHEEL_MODEL = { objUrl: '/ps1/cars/wheel.obj', textureUrl: '/ps1/cars/wheel.png' } as const
+// The pack's car_shadow.png, verbatim — a solid black rounded blob with the
+// alpha already in the file. (Its sibling car_shadow_alpha.png is an INVERSE
+// mask — white marks the shadow — which is how an earlier build ended up
+// drawing a white card under every car. New filename, so no cache can ever
+// serve that version again.)
+export const SHADOW_TEXTURE_URL = '/ps1/cars/shadow-blob.png'
+
 /**
- * How far a car is pulled towards its driver's colour. Low on purpose: enough
- * that you can pick your own car out of a pack, not so much that the livery
- * turns into a single flat wash and every model looks the same again.
+ * A livery: one of the pack's own painted texture pages, plus the colour that
+ * page mostly reads as. The hex values are *measured* from the pixels (mean of
+ * the page with near-black and near-white excluded), not guessed from the
+ * filenames — "red" in a filename tells you nothing about how dark a red the
+ * artist mixed.
  */
-export const TINT_STRENGTH = 0.3
+export interface CarLivery {
+  readonly textureUrl: string
+  readonly hex: string
+}
+
+/** Every non-snow livery the pack ships, per car. First entry is the base page. */
+export const CAR_LIVERIES: ReadonlyArray<ReadonlyArray<CarLivery>> = [
+  [
+    { textureUrl: '/ps1/cars/car1.png', hex: '#2d415f' },
+    { textureUrl: '/ps1/cars/variants/car_red.png', hex: '#5f281d' },
+    { textureUrl: '/ps1/cars/variants/car_gray.png', hex: '#656665' },
+  ],
+  [
+    { textureUrl: '/ps1/cars/car2.png', hex: '#512e25' },
+    { textureUrl: '/ps1/cars/variants/car2_black.png', hex: '#343434' },
+    { textureUrl: '/ps1/cars/variants/car2_red.png', hex: '#512e25' },
+  ],
+  [
+    { textureUrl: '/ps1/cars/car3.png', hex: '#7e7126' },
+    { textureUrl: '/ps1/cars/variants/car3_red.png', hex: '#592419' },
+    { textureUrl: '/ps1/cars/variants/car3_yellow.png', hex: '#7e7126' },
+  ],
+  [
+    { textureUrl: '/ps1/cars/car4.png', hex: '#826640' },
+    { textureUrl: '/ps1/cars/variants/car4_grey.png', hex: '#3a3939' },
+    { textureUrl: '/ps1/cars/variants/car4_lightgrey.png', hex: '#7a7a7a' },
+    { textureUrl: '/ps1/cars/variants/car4_lightorange.png', hex: '#826640' },
+  ],
+  [
+    { textureUrl: '/ps1/cars/car5.png', hex: '#394d4a' },
+    { textureUrl: '/ps1/cars/variants/car5_green.png', hex: '#394d4a' },
+    { textureUrl: '/ps1/cars/variants/car5_grey.png', hex: '#474746' },
+  ],
+  [{ textureUrl: '/ps1/cars/car6.png', hex: '#63442f' }],
+  [
+    { textureUrl: '/ps1/cars/car7.png', hex: '#634434' },
+    { textureUrl: '/ps1/cars/variants/car7_black.png', hex: '#2f3030' },
+    { textureUrl: '/ps1/cars/variants/car7_brown.png', hex: '#634434' },
+    { textureUrl: '/ps1/cars/variants/car7_green.png', hex: '#29362f' },
+    { textureUrl: '/ps1/cars/variants/car7_grey.png', hex: '#5c5c5c' },
+    { textureUrl: '/ps1/cars/variants/car7_red.png', hex: '#642929' },
+  ],
+  [
+    { textureUrl: '/ps1/cars/car8.png', hex: '#474759' },
+    { textureUrl: '/ps1/cars/variants/Car8_grey.png', hex: '#585757' },
+    { textureUrl: '/ps1/cars/variants/Car8_purple.png', hex: '#474759' },
+  ],
+]
+
+/**
+ * The page whose overall colour sits nearest the driver's own.
+ *
+ * This replaced the colour wash. Tinting kept the driver's hue but muddied
+ * every page it touched; picking between the artist's own paint jobs keeps the
+ * textures exactly as authored, which is the whole reason to use a painted
+ * pack at all. The match is coarse — three or four liveries cannot span a hue
+ * wheel — but it only has to beat "always the same page", and the tower still
+ * carries the driver's true colour.
+ */
+export function liveryFor(index: number, driverHex: string | null): string {
+  const liveries = CAR_LIVERIES[((index % CAR_LIVERIES.length) + CAR_LIVERIES.length) % CAR_LIVERIES.length]
+  if (!driverHex || liveries.length === 1) return liveries[0].textureUrl
+
+  const target = new THREE.Color(driverHex)
+  let best = liveries[0]
+  let bestDistance = Infinity
+  for (const livery of liveries) {
+    const colour = new THREE.Color(livery.hex)
+    const distance =
+      (colour.r - target.r) ** 2 + (colour.g - target.g) ** 2 + (colour.b - target.b) ** 2
+    if (distance < bestDistance) {
+      bestDistance = distance
+      best = livery
+    }
+  }
+  return best.textureUrl
+}
 
 /** Track-space length every car is scaled to, so the field stays even. */
-const TARGET_LENGTH = 2.6
+export const TARGET_LENGTH = 2.6
 
 /**
  * Which way the models face down their own Z axis.
@@ -43,8 +130,12 @@ const TARGET_LENGTH = 2.6
  * so this is one constant rather than per-model data. Racer.tsx points a
  * kart's +Z along the track tangent, so a car facing -Z in its own file needs
  * turning about.
+ *
+ * Measured, not assumed: the pack models nose-first down +Z, so turning them
+ * about is what put the whole grid into reverse — headlights to the chase
+ * camera, boots leading down the straight.
  */
-const MODEL_FACES_NEGATIVE_Z = true
+const MODEL_FACES_NEGATIVE_Z = false
 
 /**
  * Puts a loaded car into track space: sitting on the road, centred over its

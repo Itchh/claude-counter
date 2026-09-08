@@ -1,18 +1,9 @@
-'use client'
-
-import { ModeProvider, useMode } from './ModeProvider'
-import { StandardLeaderboard } from './StandardLeaderboard'
 import { LeonLeaderboard } from './leon/LeonLeaderboard'
 
-function ModeSwitch(): React.ReactElement {
-  const { mode } = useMode()
-  return mode === 'leon' ? <LeonLeaderboard /> : <StandardLeaderboard />
-}
+// One screen, one mode. The console cabinet is the product now — there is no
+// standard view to fall back to, and nothing to switch between, so the page is
+// just the cabinet.
 
 export default function Page(): React.ReactElement {
-  return (
-    <ModeProvider>
-      <ModeSwitch />
-    </ModeProvider>
-  )
+  return <LeonLeaderboard />
 }

@@ -3,7 +3,7 @@
 import { motion } from 'motion/react'
 import type { LeaderboardEvent } from '@/types'
 import { eventText } from '@/lib/eventText'
-import { PS1 } from './ps1/theme'
+import { GT, PS1 } from './ps1/theme'
 import { useNavItem } from './ps1/navigation'
 
 /** How many events the opened ticker lists. Beyond this it stops being a
@@ -27,10 +27,12 @@ function TickerItems({ events }: { events: ReadonlyArray<LeaderboardEvent> }): R
             key={event.id}
             style={{ display: 'inline-flex', alignItems: 'center', whiteSpace: 'nowrap' }}
           >
-            <span style={{ color, textShadow: `0 0 8px ${color}50` }}>
+            <span style={{ color, textShadow: '1px 1px 0 rgba(0,0,0,0.9)' }}>
               {eventText(event)}
             </span>
-            <span style={{ color: PS1.bevelLight, padding: '0 24px' }}>◆</span>
+            {/* The separator is a chevron, not a diamond: a running band on
+                a race screen always pointed in the direction it travelled. */}
+            <span style={{ color: GT.label, padding: '0 22px', opacity: 0.7 }}>{'>>'}</span>
           </span>
         )
       })}
@@ -48,7 +50,7 @@ export function Ticker({ events }: { events: ReadonlyArray<LeaderboardEvent> | u
       initial={{ opacity: 0 }}
       animate={{ opacity: 1 }}
       transition={{ duration: 0.5, delay: 0.4 }}
-      className={['ps1-panel-inset', 'ps1-plate', 'ps1-cursor', nav.isFocused ? 'ps1-cursor-on' : '']
+      className={['gt-strip', 'gt-label', 'ps1-cursor', nav.isFocused ? 'ps1-cursor-on' : '']
         .filter(Boolean)
         .join(' ')}
       style={{
@@ -61,7 +63,7 @@ export function Ticker({ events }: { events: ReadonlyArray<LeaderboardEvent> | u
       }}
     >
       {!events || events.length === 0 ? (
-        <span style={{ color: PS1.textFaint, paddingLeft: '36px' }}>
+        <span style={{ color: GT.valueDim, paddingLeft: '36px' }}>
           {'>'} Awaiting events…
         </span>
       ) : nav.isExpanded ? (
@@ -124,7 +126,7 @@ function ExpandedTicker({
               textOverflow: 'ellipsis',
             }}
           >
-            <span style={{ color: PS1.bevelLight, flex: '0 0 auto' }}>◆</span>
+            <span style={{ color: GT.label, flex: '0 0 auto', opacity: 0.7 }}>{'>>'}</span>
             <span style={{ color, overflow: 'hidden', textOverflow: 'ellipsis' }}>
               {eventText(event)}
             </span>

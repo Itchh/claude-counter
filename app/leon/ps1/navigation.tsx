@@ -33,6 +33,8 @@ interface NavigationValue {
   readonly expandedId: string | null
   readonly register: (id: string, element: HTMLElement | null) => void
   readonly focus: (id: string) => void
+  /** Any deliberate input in a channel, forwarded to the deck's dwell timer. */
+  readonly interact: () => void
 }
 
 const NavigationContext = createContext<NavigationValue | null>(null)
@@ -58,6 +60,8 @@ export function NavigationProvider({
   }, [])
 
   const focus = useCallback((id: string): void => setFocusId(id), [])
+
+  const interact = useCallback((): void => onInteract?.(), [onInteract])
 
   useEffect(() => {
     setFocusId(null)
@@ -130,8 +134,8 @@ export function NavigationProvider({
   }, [onInteract])
 
   const value = useMemo(
-    () => ({ focusId, expandedId, register, focus }),
-    [focusId, expandedId, register, focus],
+    () => ({ focusId, expandedId, register, focus, interact }),
+    [focusId, expandedId, register, focus, interact],
   )
 
   return <NavigationContext.Provider value={value}>{children}</NavigationContext.Provider>
@@ -166,6 +170,17 @@ export function useNavItem(id: string): NavItem {
     isExpanded: context?.expandedId === id,
     focus,
   }
+}
+
+/**
+ * Lets a channel say "someone is using me" for input the navigator itself
+ * never sees — dragging a camera, say. Without it the deck would flick to the
+ * next channel mid-gesture, which reads as the screen fighting the viewer.
+ */
+export function useInteractionSignal(): () => void {
+  const context = useContext(NavigationContext)
+  const interact = context?.interact
+  return useCallback((): void => interact?.(), [interact])
 }
 
 /** True when the cursor is somewhere — the cabinet uses it to offer BACK. */

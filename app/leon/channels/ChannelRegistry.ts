@@ -18,6 +18,17 @@ export interface Channel {
   readonly blurb: string
   /** How long the deck rests here before flicking on. */
   readonly dwellMs: number
+  /**
+   * Pixels of the screen's foot this channel occupies with its own furniture.
+   *
+   * The cabinet parks its control hints in the bottom-left corner, which was
+   * free back when no channel put anything there. CH 01 now runs a full-width
+   * instrument console across the bottom of the picture, and the hints landed
+   * squarely on its lap-time column. Rather than have the deck guess, or have
+   * every channel dodge a corner it cannot see, a channel states its own
+   * clearance and the deck stacks above it.
+   */
+  readonly footHeight: number
   readonly load: () => Promise<ComponentType<ChannelProps>>
 }
 
@@ -30,6 +41,8 @@ export const CHANNELS: ReadonlyArray<Channel> = [
     name: 'TOKEN GRAND PRIX',
     blurb: 'Karts driven by live burn rate. Laps accumulate all day.',
     dwellMs: LONG_DWELL_MS,
+    // The instrument console. Kept in step with RaceHud's own BAR_HEIGHT.
+    footHeight: 156,
     load: async () => (await import('./race/RaceChannel')).RaceChannel,
   },
   {
@@ -37,6 +50,8 @@ export const CHANNELS: ReadonlyArray<Channel> = [
     name: 'STANDINGS',
     blurb: 'Character-select roster, model split, timeline and event ticker.',
     dwellMs: SHORT_DWELL_MS,
+    // Its status bar across the foot.
+    footHeight: 54,
     load: async () => (await import('./StandingsChannel')).StandingsChannel,
   },
 ]
