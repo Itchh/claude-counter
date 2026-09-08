@@ -2,80 +2,59 @@
 
 import { AnimatePresence, motion } from 'motion/react'
 import { fmtTokensShort } from '@/lib/formatters'
-import { GT, PS1, PS1_TYPE } from '../../ps1/theme'
+import { ARCADE, GT, PS1, PS1_TYPE } from '../../ps1/theme'
 import { SCALED_SURFACE } from '../../ps1/hudScale'
-import {
-  ChromeCounter,
-  GearBox,
-  HudLabel,
-  HudValue,
-  LcdReadout,
-  StatusCluster,
-  Tachometer,
-  burnRateToGear,
-  formatLapTime,
-  type StatusChip,
-} from '../../ps1/gtHud'
+import { Tachometer, burnRateToGear, formatLapTime } from '../../ps1/gtHud'
+import { Timecode } from '../../ps1/Timecode'
 import { Minimap } from './Minimap'
 import type { SimRacer } from './useRaceSim'
 import type { ActiveShot } from './CameraDirector'
 
-// CH 01's instrument panel, built to the shape every console racer of the era
-// used: a full-width console bar across the foot of the picture, and nothing
-// else in the middle of the screen.
+// CH 01's instrument panel, laid out to the furniture map every arcade racer
+// of the period used — and nothing else in the middle of the screen.
 //
-// The layout is not decoration — it is the era's answer to a real problem.
-// The picture is moving and the driver is looking at the horizon, so every
-// readout is banked at the bottom edge where the eye can drop to it and come
-// straight back. Splits sit left because they are read between corners; the
-// map sits centre-left because it is glanced at; the dial sits far right
-// because it is read peripherally and never actually looked at.
+// The console bar is gone. It cost 156 pixels of picture along the whole foot
+// of the frame and, being a fixed height, capped how large any instrument in
+// it could be — so on a wall-mounted screen the readouts stayed small while
+// the road they sat under got bigger. The reference machines banked everything
+// into the four corners instead: circuit trace and its records top-left, the
+// clock and the position dead centre, lap time on the right, and the
+// tachometer bottom-right with a green segment readout tucked into its
+// lower-left corner. That is what this is.
 //
-// The one rule kept from before: every number is a real one. Speed is live
-// tokens per minute, the dial reads the same figure, the gear is which band
-// of that dial the needle is in, and the splits are recorded lap times from
-// the simulation — not a plausible-looking clock.
+// Two rules carried over from the bar, and they are the ones that matter.
+// Every number is a real one: speed is live tokens per minute, the dial reads
+// the same figure, the gear is which band of that dial the needle sits in, and
+// every clock is recorded by the simulation. And nothing sits in a box — a
+// panel costs a rectangle of picture, an outline plus a hard offset costs
+// none, which is why those screens stayed legible over a moving road.
 
 /**
- * The reference racers' text palette, used by everything that floats over the
- * picture. Saturated primaries for labels and accents, plain white for
- * values, the LCD yellow for numbers that tick — and black offsets instead of
- * boxes, because a shadow costs no picture and a panel costs a rectangle of
- * it. The console bar at the foot of the screen keeps its own GT palette;
- * these are for the type that sits on the sky.
+ * The reference racers' text palette. Red labels with a maroon bevel under
+ * them, gold for the clock, paper white for values, LCD green for anything
+ * live. The label carries the colour; the value almost never does.
  */
 const RR = {
-  /** Small caps naming a readout. The gold every era HUD label wore. */
-  label: '#ffb020',
-  /** The leader's rank numeral. */
-  gold: '#ffd23d',
-  /** Value text. Paper white; the label carries the colour. */
+  label: ARCADE.label,
+  labelShadow: ARCADE.labelShadow,
+  gold: '#ffc21a',
   value: '#ffffff',
-  /** Live numbers — the amber-green of a segment display. */
-  readout: '#ffe14d',
-  /** Anything present but not currently mattering. */
-  dim: '#c9cddb',
+  live: ARCADE.telemetry,
+  dim: GT.valueDim,
 } as const
 
 /**
- * The era's whole legibility system: a solid black offset, no blur. Blur is a
- * soft light source; an offset is ink. On a bright daylight scene the hard
- * edge is also simply what survives — a soft shadow vanishes into a white
- * horizon and takes the text with it.
+ * The era's whole legibility system: an outline that inks the letterform's
+ * edge, then a solid offset that lifts it off the picture. No blur — blur is a
+ * soft light source, and over a bright horizon it vanishes and takes the text
+ * with it.
  */
-// The offset alone was not enough. The reference HUDs were set in fat display
-// faces whose strokes could carry a bare drop shadow; this HUD face is a thin
-// bitmap recreation, and over a white horizon its hairline strokes dissolved.
-// A four-direction outline inks the letterform's whole edge first, and the
-// offset then does what it always did — lifts the text off the picture.
 const OUTLINE = '-1px -1px 0 #000, 1px -1px 0 #000, -1px 1px 0 #000, 1px 1px 0 #000'
-const HARD_SHADOW_SMALL = { textShadow: `${OUTLINE}, 2px 2px 0 rgba(0,0,0,0.92)` } as const
-const HARD_SHADOW_LARGE = { textShadow: `${OUTLINE}, 3px 3px 0 rgba(0,0,0,0.92)` } as const
+const INK_SMALL = { textShadow: `${OUTLINE}, 2px 2px 0 rgba(0,0,0,0.92)` } as const
+const INK_LARGE = { textShadow: `${OUTLINE}, 3px 3px 0 rgba(0,0,0,0.92)` } as const
 
-/** Splits shown in the lap-time block. Three, as the reference does. */
-const VISIBLE_SPLITS = 3
-/** Height of the console bar. Fixed: instrumentation does not reflow. */
-const BAR_HEIGHT = 156
+/** Gears in the ladder bottom-left. Six, as every car in those games had. */
+const GEAR_STEPS = ['1', '2', '3', '4', '5', '6'] as const
 
 interface RaceHudProps {
   /** Sampled slowly, for the numbers. */
@@ -92,28 +71,96 @@ interface RaceHudProps {
   readonly onToggleAudio: () => void
   /** The circuit's name. The channel runs a different one each race. */
   readonly trackTitle: string
+  /** True while a cabinet window is open over the race. */
+  readonly paused: boolean
+  /** Opens a driver's paint shop. The tower is the only way in. */
+  readonly onOpenSetup: (racerKey: string) => void
 }
 
 /**
- * "JACK'S RACER", but "CHRIS' RACER" — a trailing s takes a bare apostrophe.
- * Cheap to get right and conspicuous when wrong on a wall-sized screen.
- */
-function possessive(name: string): string {
-  const upper = name.toUpperCase()
-  return upper.endsWith('S') ? `${upper}'` : `${upper}'S`
-}
-
-/**
- * The last three completed laps, oldest first, padded with empty rows.
+ * Elapsed time on the lap currently being run.
  *
- * Padding rather than truncating is the point: the block is three lines tall
- * from the first frame, so the bar never grows a row underneath the driver's
- * eye once the third lap lands.
+ * Derived rather than stored: the simulation already records the total clock
+ * and every completed split, so the current lap is what is left over. It is
+ * the one clock on screen that is moving, which is why it gets the gold.
  */
-function recentSplits(lapTimes: ReadonlyArray<number>): ReadonlyArray<number | null> {
-  const tail = lapTimes.slice(-VISIBLE_SPLITS)
-  const padding = Array.from({ length: VISIBLE_SPLITS - tail.length }, () => null)
-  return [...tail, ...padding]
+function currentLapElapsed(racer: SimRacer | undefined): number | null {
+  if (!racer) return null
+  const completed = racer.lapTimes.reduce((sum, lap) => sum + lap, 0)
+  return Math.max(0, racer.totalClock - completed)
+}
+
+/** The driver's best lap so far — the record the current one is racing. */
+function bestLap(racer: SimRacer | undefined): number | null {
+  if (!racer || racer.lapTimes.length === 0) return null
+  return Math.min(...racer.lapTimes)
+}
+
+/** The last completed lap. Null until one is in the book. */
+function lastLap(racer: SimRacer | undefined): number | null {
+  if (!racer || racer.lapTimes.length === 0) return null
+  return racer.lapTimes[racer.lapTimes.length - 1]
+}
+
+/** A red label with the kit's hard bevel under it. Never carries a value. */
+function RedLabel({
+  children,
+  size = 15,
+}: {
+  readonly children: React.ReactNode
+  readonly size?: number
+}): React.ReactElement {
+  return (
+    <span
+      className="gt-label"
+      style={{
+        fontSize: `${size}px`,
+        letterSpacing: '0.16em',
+        color: RR.label,
+        textShadow: `1px 1px 0 ${RR.labelShadow}, ${OUTLINE}`,
+      }}
+    >
+      {children}
+    </span>
+  )
+}
+
+/** Label over value, the era's entire typographic system in one lockup. */
+function Readout({
+  label,
+  value,
+  size = 26,
+  color = RR.value,
+  align = 'left',
+}: {
+  readonly label: string
+  readonly value: string
+  readonly size?: number
+  readonly color?: string
+  readonly align?: 'left' | 'center' | 'right'
+}): React.ReactElement {
+  return (
+    <div style={{ textAlign: align, lineHeight: 1.05 }}>
+      <div>
+        <RedLabel>{label}</RedLabel>
+      </div>
+      {/* A duration, so it is drawn on segments rather than set in the HUD
+          face. See ps1/Timecode.tsx for why that line is drawn where it is —
+          the position numeral two boxes over is not a duration and stays in
+          the ordinary face. */}
+      <span
+        style={{
+          display: 'flex',
+          justifyContent: align === 'right' ? 'flex-end' : align === 'center' ? 'center' : 'flex-start',
+          // The bed is drawn, not blurred, so the ink under it is a hard
+          // offset exactly as it is under the lettering beside it.
+          filter: 'drop-shadow(2px 2px 0 rgba(0,0,0,0.92))',
+        }}
+      >
+        <Timecode value={value} size={size} color={color} label={`${label} ${value}`} />
+      </span>
+    </div>
+  )
 }
 
 export function RaceHud({
@@ -125,51 +172,21 @@ export function RaceHud({
   onReleaseCamera,
   audioOn,
   onToggleAudio,
+  paused,
+  onOpenSetup,
 }: RaceHudProps): React.ReactElement {
   const leader = racers[0]
   const shotKind = activeShot?.kind ?? null
-  // The ident names whoever the camera is on, whether the director chose them
-  // or the viewer did — the label underneath is what says which.
-  const povName =
-    shotKind === 'onboard' || shotKind === 'follow' ? (activeShot?.name ?? null) : null
-  const povColor = activeShot?.color ?? PS1.cyan
   const isManual = shotKind === 'follow' || shotKind === 'free'
 
-  // The instruments read the car the camera is on. That is what a race HUD
-  // is: the telemetry of whoever you are watching. It falls back to the
-  // leader during a trackside or replay shot, because a dead dial reads as a
-  // broken screen rather than as "no subject".
+  // The instruments read the car the camera is on. That is what a race HUD is:
+  // the telemetry of whoever you are watching. It falls back to the leader
+  // during a trackside shot, because a dead dial reads as a broken screen
+  // rather than as "no subject".
   const subject = racers.find((racer) => racer.key === activeShot?.racerKey) ?? leader
-  const splits = recentSplits(subject?.lapTimes ?? [])
+  const subjectIndex = subject ? racers.findIndex((racer) => racer.key === subject.key) : -1
   const burnRate = subject?.velocityTokensPerMin ?? 0
-
-  const chips: ReadonlyArray<StatusChip> = [
-    {
-      id: 'live',
-      // Single ASCII capitals, not pictographs. The HUD face is a bitmap
-      // recreation with no symbol coverage, so a glyph outside its set falls
-      // back to a different font at a different weight — a lamp that changes
-      // typeface when it lights is worse than no lamp.
-      glyph: 'B',
-      lit: subject?.isActive ?? false,
-      color: PS1.green,
-      title: 'Burning — subject is spending tokens right now',
-    },
-    {
-      id: 'auto',
-      glyph: 'A',
-      lit: !isManual,
-      color: GT.label,
-      title: 'Camera on the automatic director',
-    },
-    {
-      id: 'flag',
-      glyph: 'L',
-      lit: (subject?.lapTimes.length ?? 0) > 0,
-      color: PS1.cyan,
-      title: 'Lap logged — at least one completed lap on the board',
-    },
-  ]
+  const gear = subject ? String(burnRateToGear(burnRate)) : '—'
 
   return (
     // Above the canvas, which is itself lifted above the painted sky. Without
@@ -185,36 +202,6 @@ export function RaceHud({
         ...SCALED_SURFACE,
       }}
     >
-      {/* Stage ident. Floating type with a hard shadow, not a boxed plate —
-          the reference racers put nothing behind their HUD text but the
-          picture, and got their legibility from a solid black offset instead.
-          The two-colour, two-size stack (small saturated label over a big
-          white value) is the era's whole typographic system in one lockup. */}
-      <div style={{ position: 'absolute', top: '14px', left: '20px', ...HARD_SHADOW_SMALL }}>
-        <div
-          className="gt-label"
-          style={{
-            fontSize: `${PS1_TYPE.label}px`,
-            color: RR.label,
-            letterSpacing: '0.14em',
-          }}
-        >
-          Stage 01
-        </div>
-        <div
-          className="gt-label"
-          style={{
-            fontSize: `${PS1_TYPE.display - 14}px`,
-            color: RR.value,
-            letterSpacing: '0.04em',
-            marginTop: '2px',
-            ...HARD_SHADOW_LARGE,
-          }}
-        >
-          {trackTitle}
-        </div>
-      </div>
-
       {isEmpty ? (
         <div
           style={{
@@ -232,246 +219,226 @@ export function RaceHud({
         </div>
       ) : (
         <>
-          {/* The leaderboard. Rebuilt to the reference racers' system:
-              nothing behind the text, hierarchy carried entirely by size and
-              colour, contrast carried entirely by a hard black offset shadow.
-              The rank numeral is the big saturated element (gold for the
-              leader, white for the field, the driver's own colour when the
-              camera is on them), the name is white value-text beside it, and
-              the score sits in the era's readout yellow. The leader's row is
-              simply *larger* — which is the entire way those games said
-              "this one matters" — and no row has a box, a plate, or a rule. */}
+          {/* TOP LEFT — the trace, then the two clocks that qualify it. */}
           <div
             style={{
               position: 'absolute',
-              left: '20px',
-              top: '84px',
+              left: '18px',
+              top: '10px',
               display: 'flex',
               flexDirection: 'column',
-              gap: '6px',
+              gap: '2px',
             }}
           >
-            {racers.map((racer, index) => {
-              const isPov = activeShot?.racerKey === racer.key
-              const isLeader = index === 0
-              const rankColor = isPov ? racer.color : isLeader ? RR.gold : RR.value
-              const rowSize = isLeader ? PS1_TYPE.title : PS1_TYPE.body
-              return (
-                <div
-                  key={racer.key}
-                  style={{
-                    display: 'flex',
-                    alignItems: 'baseline',
-                    gap: '10px',
-                    minWidth: '300px',
-                  }}
-                >
-                  <span
-                    className="gt-label"
-                    style={{
-                      width: '2.4ch',
-                      textAlign: 'right',
-                      fontSize: `${rowSize + 6}px`,
-                      fontVariantNumeric: 'tabular-nums',
-                      color: rankColor,
-                      ...HARD_SHADOW_LARGE,
-                    }}
-                  >
-                    {index + 1}
-                  </span>
-                  <span
-                    style={{
-                      flex: 1,
-                      minWidth: 0,
-                      overflow: 'hidden',
-                      textOverflow: 'ellipsis',
-                      whiteSpace: 'nowrap',
-                      fontSize: `${rowSize}px`,
-                      textTransform: 'uppercase',
-                      letterSpacing: '0.06em',
-                      color: RR.value,
-                      opacity: isLeader || isPov ? 1 : 0.88,
-                      ...HARD_SHADOW_SMALL,
-                    }}
-                    title={racer.name}
-                  >
-                    {racer.name}
-                  </span>
-                  <span
-                    className="gt-label"
-                    style={{
-                      fontSize: `${Math.max(PS1_TYPE.label, rowSize - 4)}px`,
-                      fontVariantNumeric: 'tabular-nums',
-                      color: racer.isActive ? RR.readout : RR.dim,
-                      ...HARD_SHADOW_SMALL,
-                    }}
-                  >
-                    {fmtTokensShort(racer.score)}
-                  </span>
-                </div>
-              )
-            })}
+            <RedLabel size={13}>Stage 01 · {trackTitle}</RedLabel>
+            <Minimap racersRef={racersRef} focusKey={activeShot?.racerKey ?? null} size={172} />
+            <Readout label="Record" value={formatLapTime(bestLap(subject))} size={24} />
+            <Readout label="Total" value={formatLapTime(subject?.totalClock ?? null)} size={24} />
           </div>
 
-          {/* POV ident. Only present during an onboard shot, and keyed on the
-              name so switching subject replays the entrance rather than
-              silently swapping the text. */}
-          <AnimatePresence mode="wait">
-            {povName && (
-              <motion.div
-                key={povName}
-                initial={{ opacity: 0, x: -14 }}
-                animate={{ opacity: 1, x: 0 }}
-                exit={{ opacity: 0, x: 8 }}
-                transition={{ duration: 0.22, ease: 'easeOut' }}
-                style={{
-                  position: 'absolute',
-                  left: '18px',
-                  bottom: `${BAR_HEIGHT + 14}px`,
-                }}
-              >
-                <span
-                  className="gt-ident"
-                  style={{ boxShadow: `inset 0 1px 0 0 ${povColor}`, borderLeft: `3px solid ${povColor}` }}
-                >
-                  <span
-                    className="gt-label"
-                    style={{ fontSize: `${PS1_TYPE.title}px`, color: povColor }}
-                  >
-                    {possessive(povName)} Racer
-                  </span>
-                  <span
-                    className="gt-label"
-                    style={{ fontSize: `${PS1_TYPE.micro}px`, color: GT.valueDim, marginLeft: '12px' }}
-                  >
-                    {shotKind === 'follow' ? 'Following' : 'Onboard'}
-                  </span>
-                </span>
-              </motion.div>
-            )}
-          </AnimatePresence>
-
-          {/* Camera state. Present only once the viewer has taken the camera
-              off the director, and carrying the way back — a wall-mounted
-              deck has no Esc key within reach. */}
-          <AnimatePresence>
-            {isManual && (
-              <motion.div
-                initial={{ opacity: 0, y: 8 }}
-                animate={{ opacity: 1, y: 0 }}
-                exit={{ opacity: 0, y: 8 }}
-                transition={{ duration: 0.2, ease: 'easeOut' }}
-                style={{
-                  position: 'absolute',
-                  bottom: `${BAR_HEIGHT + 14}px`,
-                  right: '18px',
-                  display: 'flex',
-                  alignItems: 'center',
-                  gap: '12px',
-                }}
-              >
-                <span className="gt-ident">
-                  <span
-                    className="gt-label"
-                    style={{ fontSize: `${PS1_TYPE.label}px`, color: PS1.cyan }}
-                  >
-                    {shotKind === 'free' ? 'Free camera' : 'Manual camera'}
-                  </span>
-                </span>
-                <button
-                  type="button"
-                  onClick={onReleaseCamera}
-                  className="gt-label"
-                  style={{
-                    pointerEvents: 'auto',
-                    background: '#2c2c34',
-                    border: 'none',
-                    boxShadow: 'inset 2px 2px 0 0 #c9c9d4, inset -2px -2px 0 0 #1c1c22',
-                    color: GT.label,
-                    fontSize: `${PS1_TYPE.micro}px`,
-                    padding: '4px 10px',
-                  }}
-                >
-                  Esc — resume broadcast
-                </button>
-              </motion.div>
-            )}
-          </AnimatePresence>
-
-          {/* ============================================================
-              THE CONSOLE BAR
-          ============================================================ */}
+          {/* TOP CENTRE — the clock that is moving, and where you are in the
+              field. The two numbers a driver actually races against. */}
           <div
-            className="gt-bar"
             style={{
               position: 'absolute',
-              left: 0,
-              right: 0,
-              bottom: 0,
-              height: `${BAR_HEIGHT}px`,
+              left: '50%',
+              top: '8px',
+              transform: 'translateX(-50%)',
               display: 'flex',
-              alignItems: 'center',
-              gap: '20px',
-              padding: '0 24px',
+              alignItems: 'flex-start',
+              gap: '30px',
             }}
           >
-            {/* LAP TIME + TOTAL TIME */}
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '2px', minWidth: '210px' }}>
-              <HudLabel size={16}>Lap time</HudLabel>
-              {splits.map((split, index) => (
-                <div
-                  key={`split-${index}`}
-                  style={{ display: 'flex', alignItems: 'baseline', gap: '8px' }}
-                >
-                  <HudValue size={16} dim>
-                    {index + 1}:
-                  </HudValue>
-                  {/* The most recent completed lap is the one being compared
-                      against, so it carries the gold — everything else is a
-                      reference value and stays white. */}
-                  <HudValue
-                    size={17}
-                    dim={split === null}
-                    highlight={
-                      split !== null && index === splits.filter((s) => s !== null).length - 1
-                        ? GT.label
-                        : null
-                    }
-                  >
-                    {formatLapTime(split)}
-                  </HudValue>
-                </div>
-              ))}
-              <div style={{ marginTop: '6px' }}>
-                <HudLabel size={16}>Total time</HudLabel>
+            <Readout
+              label="Time"
+              value={formatLapTime(currentLapElapsed(subject))}
+              size={48}
+              color={RR.gold}
+              align="center"
+            />
+            <div style={{ textAlign: 'center', lineHeight: 1.05 }}>
+              <div>
+                <RedLabel>Position</RedLabel>
               </div>
-              <HudValue size={19}>{formatLapTime(subject?.totalClock ?? null)}</HudValue>
+              <span
+                className="gt-label"
+                style={{ fontSize: '52px', color: RR.value, fontVariantNumeric: 'tabular-nums', ...INK_LARGE }}
+              >
+                {String(subjectIndex + 1).padStart(2, '0')}
+              </span>
+              <span
+                className="gt-label"
+                style={{ fontSize: '26px', color: RR.dim, ...INK_SMALL }}
+              >
+                /{String(racers.length).padStart(2, '0')}
+              </span>
+            </div>
+          </div>
+
+          {/* RIGHT — lap time where the reference puts it, and the order
+              underneath. On a screen the whole room watches, "who else is out
+              there" is the question a lone position numeral cannot answer.
+              Sits below the cabinet's own corner buttons. */}
+          <div
+            style={{
+              position: 'absolute',
+              right: '18px',
+              top: '72px',
+              display: 'flex',
+              flexDirection: 'column',
+              alignItems: 'flex-end',
+              gap: '10px',
+            }}
+          >
+            <Readout label="Lap time" value={formatLapTime(lastLap(subject))} size={24} align="right" />
+            {/* Fixed columns, not a flexing name: with `flex: 1` on the name
+                the lap column was pushed to whatever width the widest name
+                allowed, so the two halves of a row drifted apart and stopped
+                reading as one line.
+
+                Three columns, and there used to be four. The fourth was a
+                bar showing each driver's score as a share of the leader's —
+                the same number as the figure beside it, drawn twice — and it
+                was the widest thing in the tower. Dropping it bought back
+                sixty pixels, which went into the type: a board on a wall is
+                read at a glance from across a room, and at that distance a
+                legible name beats a second opinion about the number next to
+                it. */}
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '2px' }}>
+              {racers.map((racer, index) => {
+                const isSubject = racer.key === subject?.key
+                return (
+                  <button
+                    key={racer.key}
+                    type="button"
+                    onClick={() => onOpenSetup(racer.key)}
+                    title={`Paint shop — ${racer.name}`}
+                    className="gt-tower-row arc-tower-row"
+                    style={{
+                      pointerEvents: 'auto',
+                      // No plate behind it, and no rules either — see
+                      // .arc-tower-row. Done in CSS rather than inline so the
+                      // row keeps the hover mark that opens the paint shop.
+                      border: 'none',
+                      padding: '1px 0',
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: '7px',
+                      textAlign: 'left',
+                      font: 'inherit',
+                    }}
+                  >
+                    <span
+                      className="gt-label"
+                      style={{
+                        width: '1.6ch',
+                        textAlign: 'right',
+                        fontSize: `${PS1_TYPE.body}px`,
+                        fontVariantNumeric: 'tabular-nums',
+                        color: index === 0 ? RR.gold : RR.value,
+                        ...INK_SMALL,
+                      }}
+                    >
+                      {index + 1}
+                    </span>
+                    <span
+                      style={{
+                        width: '5px',
+                        height: '17px',
+                        background: racer.color,
+                        boxShadow: '1px 1px 0 #000',
+                      }}
+                    />
+                    <span
+                      title={racer.name}
+                      className="gt-label"
+                      style={{
+                        width: '78px',
+                        overflow: 'hidden',
+                        textOverflow: 'ellipsis',
+                        whiteSpace: 'nowrap',
+                        fontSize: `${PS1_TYPE.body}px`,
+                        color: RR.value,
+                        opacity: isSubject ? 1 : 0.85,
+                        ...INK_SMALL,
+                      }}
+                    >
+                      {racer.name}
+                    </span>
+                    <span
+                      className="gt-label"
+                      style={{
+                        width: '58px',
+                        textAlign: 'right',
+                        fontSize: `${PS1_TYPE.label}px`,
+                        fontVariantNumeric: 'tabular-nums',
+                        color: racer.isActive ? RR.live : RR.dim,
+                        ...INK_SMALL,
+                      }}
+                    >
+                      {fmtTokensShort(racer.score)}
+                    </span>
+                  </button>
+                )
+              })}
+            </div>
+          </div>
+
+          {/* BOTTOM LEFT — the gear ladder, and whose car the camera is on. */}
+          <div
+            style={{
+              position: 'absolute',
+              left: '18px',
+              bottom: '18px',
+              display: 'flex',
+              alignItems: 'flex-end',
+              gap: '14px',
+            }}
+          >
+            <div style={{ display: 'flex', flexDirection: 'column-reverse', gap: '2px' }}>
+              {GEAR_STEPS.map((step) => {
+                const lit = step === gear
+                return (
+                  <span
+                    key={step}
+                    className="gt-label"
+                    style={{
+                      fontSize: '11px',
+                      width: '22px',
+                      textAlign: 'center',
+                      color: lit ? '#000' : ARCADE.silver,
+                      background: lit ? RR.live : 'rgba(4,4,10,0.7)',
+                      boxShadow: `inset 0 0 0 1px ${lit ? '#000' : ARCADE.rule}`,
+                    }}
+                  >
+                    {step}
+                  </span>
+                )
+              })}
             </div>
 
-            <span className="gt-divider" />
-
-            {/* Circuit map */}
-            <Minimap racersRef={racersRef} focusKey={activeShot?.racerKey ?? null} />
-
-            <span className="gt-divider" />
-
-            {/* Lamps and the lap odometer, stacked on the centre line. */}
-            <div
-              style={{
-                flex: 1,
-                display: 'flex',
-                flexDirection: 'column',
-                alignItems: 'center',
-                justifyContent: 'center',
-                gap: '10px',
-              }}
-            >
-              <div style={{ display: 'flex', alignItems: 'center', gap: '14px' }}>
-                <StatusCluster chips={chips} />
-                {/* The speaker. A real button among the lamps, because sound
-                    is the one instrument the viewer operates — and the click
-                    that lights it is also what the browser requires before an
-                    AudioContext may make any noise at all. */}
+            <div>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                <span
+                  style={{
+                    width: '9px',
+                    height: '30px',
+                    background: subject?.color ?? PS1.cyan,
+                    boxShadow: '2px 2px 0 #000',
+                  }}
+                />
+                <span
+                  className="gt-label"
+                  style={{ fontSize: `${PS1_TYPE.body + 6}px`, color: RR.value, ...INK_SMALL }}
+                >
+                  {subject?.name ?? '—'}
+                </span>
+              </div>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginTop: '2px' }}>
+                <span className="gt-label" style={{ fontSize: '13px', color: RR.gold, ...INK_SMALL }}>
+                  {isManual ? (shotKind === 'free' ? 'Free camera' : 'Following') : 'Onboard'} · lap{' '}
+                  {subject?.lap ?? 0} · {fmtTokensShort(subject?.score ?? 0)} tokens
+                </span>
                 <button
                   type="button"
                   onClick={onToggleAudio}
@@ -487,34 +454,103 @@ export function RaceHud({
                     ...(audioOn ? { color: PS1.green } : {}),
                   }}
                 >
-                  SND
+                  Sound
                 </button>
+                {isManual && (
+                  <button
+                    type="button"
+                    onClick={onReleaseCamera}
+                    className="gt-label"
+                    style={{
+                      pointerEvents: 'auto',
+                      background: '#2c2c34',
+                      border: 'none',
+                      boxShadow: 'inset 2px 2px 0 0 #c9c9d4, inset -2px -2px 0 0 #1c1c22',
+                      color: GT.label,
+                      fontSize: `${PS1_TYPE.micro}px`,
+                      padding: '4px 10px',
+                    }}
+                  >
+                    C — resume broadcast
+                  </button>
+                )}
               </div>
-              <ChromeCounter value={subject?.lap ?? 0} suffix="Lap" />
+            </div>
+          </div>
+
+          {/* BOTTOM RIGHT — the dial, with the segment readout tucked into its
+              lower-left exactly as the reference does: gear above, rate below.
+              The needle only breathes while the subject is actually burning. */}
+          <div
+            style={{
+              position: 'absolute',
+              right: '18px',
+              bottom: '12px',
+              display: 'flex',
+              alignItems: 'flex-end',
+              gap: '14px',
+            }}
+          >
+            <div style={{ textAlign: 'left', paddingBottom: '14px' }}>
+              <div>
+                <span className="gt-label" style={{ fontSize: '20px', color: RR.live, ...INK_SMALL }}>
+                  {gear}
+                </span>
+              </div>
               <span
                 className="gt-label"
-                style={{ fontSize: '11px', color: GT.valueDim }}
+                style={{
+                  fontSize: '30px',
+                  color: RR.live,
+                  fontVariantNumeric: 'tabular-nums',
+                  ...INK_SMALL,
+                }}
               >
-                {fmtTokensShort(racers.reduce((sum, racer) => sum + racer.score, 0))} tokens today
+                {(burnRate / 1000).toFixed(1)}
+              </span>
+              <span className="gt-label" style={{ fontSize: '15px', color: RR.live, marginLeft: '4px', ...INK_SMALL }}>
+                K t/min
               </span>
             </div>
-
-            <span className="gt-divider" />
-
-            {/* Gear and speed. Speed is the honest one: tokens per minute. */}
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', alignItems: 'flex-start' }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-                <HudLabel size={15}>Gear</HudLabel>
-                <GearBox gear={burnRateToGear(burnRate)} />
-              </div>
-              <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-                <HudLabel size={15}>Speed</HudLabel>
-                <LcdReadout value={burnRate} unit="t/m" digits={5} size={26} />
-              </div>
-            </div>
-
-            <Tachometer value={burnRate} caption="×5k tokens/min" size={124} />
+            <Tachometer
+              value={burnRate}
+              caption="×1k tokens/min"
+              size={168}
+              live={(subject?.isActive ?? false) && !paused}
+            />
           </div>
+
+          {/* The hold. A window is open; the picture is still, and says so. */}
+          <AnimatePresence>
+            {paused && (
+              <motion.div
+                initial={{ opacity: 0 }}
+                animate={{ opacity: 1 }}
+                exit={{ opacity: 0 }}
+                transition={{ duration: 0.14 }}
+                style={{
+                  position: 'absolute',
+                  left: '50%',
+                  top: '104px',
+                  transform: 'translateX(-50%)',
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '10px',
+                }}
+              >
+                <span style={{ display: 'flex', gap: '4px' }}>
+                  <span style={{ width: '7px', height: '24px', background: ARCADE.amber }} />
+                  <span style={{ width: '7px', height: '24px', background: ARCADE.amber }} />
+                </span>
+                <span
+                  className="gt-label"
+                  style={{ fontSize: '24px', letterSpacing: '0.2em', color: ARCADE.amber, ...INK_LARGE }}
+                >
+                  Paused
+                </span>
+              </motion.div>
+            )}
+          </AnimatePresence>
         </>
       )}
     </div>

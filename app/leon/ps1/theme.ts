@@ -79,6 +79,58 @@ export const GT = {
 } as const
 
 /**
+ * The arcade UI kit — the platform's own, drawn in Figma and exported as the
+ * kit file, and from here on the ground for every piece of deck chrome.
+ *
+ * It is a third register alongside the two above, and the one that wins on
+ * flat screens: not the menu's blue bevelled furniture and not the race bar's
+ * green console, but the attract-mode board — black ground, red labels cut
+ * with a lower bevel, white numerals outlined in black, amber for anything
+ * live, a two-stop chrome ramp for positions, and one green LCD.
+ *
+ * Nothing in it glows. Every piece of depth is a hard offset: an outline at
+ * one or two pixels and a drop at four. That is the whole reason the era's
+ * boards stayed legible over a moving picture, and a blur anywhere in here
+ * undoes it.
+ */
+export const ARCADE = {
+  /** The ground. Everything else is drawn on this. */
+  ground: '#0a0a0a',
+  /** A recess in the ground — LCD beds, telemetry plates. */
+  groundDeep: '#050505',
+  /** Panel rules. The kit draws a frame, never a fill. */
+  rule: '#1e1e1e',
+  /** Every label. Red, with `labelShadow` sitting under it as the bevel. */
+  label: '#e02020',
+  labelShadow: '#6b0000',
+  /** Primary values. Paper white — the label carries the colour. */
+  value: '#ffffff',
+  /** Captions and units. */
+  silver: '#c8c8c8',
+  /** Meta: the line under a caption that nobody reads twice. */
+  grey: '#8a8a8a',
+  /** Anything live: a running clock, a rate, a number still moving. */
+  amber: '#ffb000',
+  amberShadow: '#a05000',
+  /** LCD green, and the unlit bed it sits in. */
+  telemetry: '#4cff3c',
+  telemetryBed: '#123a10',
+  /** Outline and drop. Not a colour choice — the kit's structure. */
+  outline: '#000000',
+  /** Menu ground. Used for the head of a screen and nothing else. */
+  menuBlue: '#1030c0',
+  /** Attract mode and hazards. The only saturated non-signal colour. */
+  hazard: '#ff00a0',
+  /** The two-stop ramp that makes a numeral read as chrome. */
+  chromeHigh: '#ffffff',
+  chromeLow: '#8a8a8a',
+  chromeFoot: '#c8c8c8',
+} as const
+
+/** The chrome ramp as a CSS image, for clipping to glyphs or filling a chip. */
+export const ARCADE_CHROME_RAMP = `linear-gradient(${ARCADE.chromeHigh} 0%, ${ARCADE.chromeHigh} 46%, ${ARCADE.chromeLow} 46%, ${ARCADE.chromeFoot} 100%)`
+
+/**
  * Dusk backdrop for the 3D channels. The era's racers almost never rendered a
  * black void: the far plane was hidden behind a painted sky that the fog
  * colour matched exactly, so geometry dissolved into the horizon instead of

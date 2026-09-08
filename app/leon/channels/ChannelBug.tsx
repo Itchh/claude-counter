@@ -1,8 +1,8 @@
 'use client'
 
 import { motion } from 'motion/react'
-import { CHANNELS, channelNumber } from './ChannelRegistry'
-import { GT } from '../ps1/theme'
+import { channelNumber } from './ChannelRegistry'
+import { ARCADE } from '../ps1/theme'
 import { SCALED_CHROME } from '../ps1/hudScale'
 
 // The corner ident, borrowed wholesale from broadcast television: channel
@@ -40,21 +40,13 @@ export function ChannelBug({
     >
       {/* Cut like the idents on the picture itself, so the cabinet's own
           chrome and the channel's chrome are drawn in one hand. */}
-      <span className="gt-ident" style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-        <span
-          className="gt-label"
-          style={{
-            fontSize: 'clamp(10px, 1.1vw, 13px)',
-            color: GT.label,
-            fontVariantNumeric: 'tabular-nums',
-          }}
-        >
+      {/* Red label, white value — the kit's label/value pair, doing the
+          same job the broadcast ident always did. */}
+      <span className="arc-inset" style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '4px 10px' }}>
+        <span className="arc-label" style={{ fontSize: 'clamp(10px, 1.1vw, 13px)' }}>
           CH {channelNumber(index)}
         </span>
-        <span
-          className="gt-label"
-          style={{ fontSize: 'clamp(9px, 1vw, 12px)', color: GT.value }}
-        >
+        <span className="arc-label-plain" style={{ fontSize: 'clamp(9px, 1vw, 12px)' }}>
           {name}
         </span>
       </span>
@@ -63,8 +55,8 @@ export function ChannelBug({
         style={{
           width: '92px',
           height: '3px',
-          background: '#05050a',
-          boxShadow: 'inset 1px 1px 0 0 #000',
+          background: ARCADE.groundDeep,
+          boxShadow: `0 0 0 2px ${ARCADE.outline}`,
         }}
       >
         <motion.div
@@ -72,15 +64,12 @@ export function ChannelBug({
           initial={{ width: '100%' }}
           animate={{ width: '0%' }}
           transition={{ duration: dwellSeconds, ease: 'linear' }}
-          style={{ height: '100%', background: GT.label, opacity: 0.7 }}
+          style={{ height: '100%', background: ARCADE.amber }}
         />
       </div>
 
-      <span
-        className="gt-label"
-        style={{ fontSize: '8px', color: GT.valueDim, letterSpacing: '0.18em' }}
-      >
-        ←/→ or 1–{CHANNELS.length}
+      <span className="arc-meta" style={{ fontSize: '8px', letterSpacing: '0.18em' }}>
+        ←/→ channel · 1–9 player
       </span>
     </div>
   )

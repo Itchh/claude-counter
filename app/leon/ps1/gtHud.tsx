@@ -1,5 +1,6 @@
 'use client'
 
+import { useEffect, useState } from 'react'
 import { GT, FONTS } from './theme'
 
 // The in-race instrument set, as the arcade sims of the period drew it.
@@ -138,8 +139,16 @@ export function GearBox({ gear }: { readonly gear: number }): React.ReactElement
 
 export interface StatusChip {
   readonly id: string
-  /** One glyph. These are stamped plates, not icons with labels. */
-  readonly glyph: string
+  /**
+   * What the lamp is called, spelled out.
+   *
+   * These were single capitals — B, A, L — on the grounds that the era's
+   * clusters were stamped letters. They were, but on a dashboard the driver
+   * had already learned; on a screen in an office nobody has a manual, and
+   * an unlit plate reading "L" tells a passer-by nothing at all. The word
+   * costs a few pixels of a bar that has room for them.
+   */
+  readonly label: string
   readonly lit: boolean
   readonly color?: string
   readonly title: string
@@ -164,10 +173,11 @@ export function StatusCluster({
           className={`gt-chip${chip.lit ? ' gt-chip-lit' : ''}`}
           style={{
             fontFamily: FONTS.hud,
+            letterSpacing: '0.08em',
             ...(chip.lit && chip.color ? { color: chip.color } : {}),
           }}
         >
-          {chip.glyph}
+          {chip.label}
         </span>
       ))}
     </span>
@@ -187,19 +197,56 @@ function polar(cx: number, cy: number, radius: number, degrees: number): [number
  * scales as one object. The needle carries a short transition because a real
  * one has mass; the ticks do not move at all.
  */
+/** How often the idle flutter is resampled while the subject is burning. */
+const REV_TICK_MS = 80
+/** Amplitude of the slow breathe and the fine flutter, as a fraction of scale. */
+const REV_BREATHE = 0.05
+const REV_FLUTTER = 0.022
+
+/** Deterministic noise, so the flutter is not a new random walk every mount. */
+function revNoise(step: number): number {
+  const value = Math.sin(step * 12.9898) * 43758.5453
+  return value - Math.floor(value)
+}
+
 export function Tachometer({
   value,
   fullScale = TACHO_FULL_SCALE,
   caption,
   size = 118,
+  live = false,
 }: {
   /** The live figure, in the same unit as `fullScale`. */
   readonly value: number
   readonly fullScale?: number
   readonly caption: string
   readonly size?: number
+  /**
+   * Whether the subject is actually burning tokens right now.
+   *
+   * A held throttle never sits still in a real car — the needle breathes with
+   * the engine and flutters on top of that — so a needle that only ever parked
+   * at a value read as a printed dial rather than an instrument. It falls dead
+   * still the moment the subject stops, which makes idle itself information.
+   */
+  readonly live?: boolean
 }): React.ReactElement {
-  const fraction = Math.max(0, Math.min(1, value / fullScale))
+  const [rev, setRev] = useState(0)
+
+  useEffect(() => {
+    if (!live) {
+      setRev(0)
+      return
+    }
+    let step = 0
+    const id = setInterval(() => {
+      step += 1
+      setRev(Math.sin(step / 8) * REV_BREATHE + (revNoise(step) - 0.5) * REV_FLUTTER)
+    }, REV_TICK_MS)
+    return () => clearInterval(id)
+  }, [live])
+
+  const fraction = Math.max(0, Math.min(1, value / fullScale + rev))
   const sweep = DIAL_END_DEG - DIAL_START_DEG
   const needleAngle = DIAL_START_DEG + fraction * sweep
   const centre = 60
@@ -265,7 +312,7 @@ export function Tachometer({
           </g>
         ))}
         <g
-          className="gt-needle"
+          className={live ? 'gt-needle gt-needle-live' : 'gt-needle'}
           style={{ transform: `rotate(${needleAngle}deg)`, transformOrigin: '60px 60px' }}
         >
           <polygon points="57,62 63,62 61,20 59,20" fill={GT.needle} />

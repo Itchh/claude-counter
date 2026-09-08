@@ -3,7 +3,7 @@
 import { motion } from 'motion/react'
 import type { LeaderboardEvent } from '@/types'
 import { eventText } from '@/lib/eventText'
-import { GT, PS1 } from './ps1/theme'
+import { PS1 } from './ps1/theme'
 import { useNavItem } from './ps1/navigation'
 
 /** How many events the opened ticker lists. Beyond this it stops being a
@@ -27,12 +27,14 @@ function TickerItems({ events }: { events: ReadonlyArray<LeaderboardEvent> }): R
             key={event.id}
             style={{ display: 'inline-flex', alignItems: 'center', whiteSpace: 'nowrap' }}
           >
-            <span style={{ color, textShadow: '1px 1px 0 rgba(0,0,0,0.9)' }}>
-              {eventText(event)}
-            </span>
+            {/* The event's colour survives as a chip rather than as
+                coloured text: on the kit's board a value is white and only
+                a gauge carries a hue, and a chip is a gauge one cell wide. */}
+            <span className="ticker-chip" style={{ background: color }} />
+            <span className="arc-value" style={{ fontSize: 'inherit' }}>{eventText(event)}</span>
             {/* The separator is a chevron, not a diamond: a running band on
                 a race screen always pointed in the direction it travelled. */}
-            <span style={{ color: GT.label, padding: '0 22px', opacity: 0.7 }}>{'>>'}</span>
+            <span className="arc-label" style={{ padding: '0 22px' }}>{'>>'}</span>
           </span>
         )
       })}
@@ -50,7 +52,7 @@ export function Ticker({ events }: { events: ReadonlyArray<LeaderboardEvent> | u
       initial={{ opacity: 0 }}
       animate={{ opacity: 1 }}
       transition={{ duration: 0.5, delay: 0.4 }}
-      className={['gt-strip', 'gt-label', 'ps1-cursor', nav.isFocused ? 'ps1-cursor-on' : '']
+      className={['arc-strip', 'ps1-cursor', nav.isFocused ? 'arc-row-on' : '']
         .filter(Boolean)
         .join(' ')}
       style={{
@@ -63,7 +65,7 @@ export function Ticker({ events }: { events: ReadonlyArray<LeaderboardEvent> | u
       }}
     >
       {!events || events.length === 0 ? (
-        <span style={{ color: GT.valueDim, paddingLeft: '36px' }}>
+        <span className="arc-meta" style={{ paddingLeft: '36px' }}>
           {'>'} Awaiting events…
         </span>
       ) : nav.isExpanded ? (
@@ -126,8 +128,12 @@ function ExpandedTicker({
               textOverflow: 'ellipsis',
             }}
           >
-            <span style={{ color: GT.label, flex: '0 0 auto', opacity: 0.7 }}>{'>>'}</span>
-            <span style={{ color, overflow: 'hidden', textOverflow: 'ellipsis' }}>
+            <span className="arc-label" style={{ flex: '0 0 auto' }}>{'>>'}</span>
+            <span className="ticker-chip" style={{ background: color }} />
+            <span
+              className="arc-value"
+              style={{ overflow: 'hidden', textOverflow: 'ellipsis', fontSize: 'inherit' }}
+            >
               {eventText(event)}
             </span>
           </span>

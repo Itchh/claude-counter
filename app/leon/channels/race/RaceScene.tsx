@@ -1,6 +1,6 @@
 'use client'
 
-import { Suspense, useCallback, useEffect, useRef, useState } from 'react'
+import { Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Canvas, useFrame, useThree } from '@react-three/fiber'
 import { useQuery } from 'convex/react'
 import * as THREE from 'three'
@@ -17,6 +17,7 @@ import {
   type CameraControlState,
 } from './cameraControls'
 import { RaceHud } from './RaceHud'
+import { PaintShopLayer, type PaintShopDriver } from './PaintShop'
 import { RacerFx } from './RacerFx'
 import { RaceAudio } from './RaceAudio'
 import { ParkedCars } from './ParkedCars'
@@ -26,7 +27,7 @@ import { RACE_WINDOW_MS, TRACKS, trackForRaceWindow } from './tracks/registry'
 import { setJitterAspect } from './Ps1Material'
 import { PS1 } from '../../ps1/theme'
 import { useInteractionSignal } from '../../ps1/navigation'
-import type { ChannelProps } from '../ChannelRegistry'
+import type { RaceChannelProps } from './RaceChannel'
 
 // CH 01. Karts driven by live burn rate, laps accumulating all day.
 //
@@ -40,7 +41,24 @@ import type { ChannelProps } from '../ChannelRegistry'
 
 const HUD_REFRESH_MS = 500
 
-export function RaceScene({ isLive }: ChannelProps): React.ReactElement {
+export function RaceScene({ isLive, paused = false }: RaceChannelProps): React.ReactElement {
+  // Whose paint shop is open, if anyone's. Holding it here rather than in the
+  // HUD is what lets the window stop the simulation: the race and the window
+  // are siblings, and only their parent can pause one for the other.
+  const [setupKey, setSetupKey] = useState<string | null>(null)
+  // One flag for "the race should be moving". A window is open over it, so the
+  // simulation, the effects and the sound stop together — stopping only some of
+  // them is what makes a pause read as a bug.
+  //
+  // The camera director is deliberately NOT included. It owns where the camera
+  // is, not what the cars are doing, and switching it off mid-shot drops the
+  // frame it had composed and leaves the scene looking at the circuit from the
+  // default position — a pause should freeze the picture, not throw it away.
+  // A held camera on stopped cars is a still frame, which is the whole idea.
+  // A paint shop window holds the race exactly as a cabinet window does. The
+  // two reasons are the same reason: the picture behind an open window is
+  // there to be read, not to move on without you.
+  const running = isLive && !paused && setupKey === null
   const race = useQuery(api.scoring.getRace, { period: 'day' })
   // Viewer camera input. Lives outside React entirely: pointer, wheel and key
   // events all land here, and the director reads it inside useFrame.
@@ -113,6 +131,14 @@ export function RaceScene({ isLive }: ChannelProps): React.ReactElement {
     followRacer(controls.current, racerKey)
   }, [])
 
+  const handleOpenSetup = useCallback((racerKey: string): void => {
+    setSetupKey(racerKey)
+  }, [])
+
+  const handleCloseSetup = useCallback((): void => {
+    setSetupKey(null)
+  }, [])
+
   const handleReleaseCamera = useCallback((): void => {
     releaseToAuto(controls.current)
   }, [])
@@ -121,8 +147,36 @@ export function RaceScene({ isLive }: ChannelProps): React.ReactElement {
     setContextEpoch((epoch) => epoch + 1)
   }, [])
 
+  // The number row picks whose car the camera rides.
+  //
+  // Counted down the position tower exactly as it is drawn, so 1 is whoever
+  // the HUD is calling first at that moment — the number on screen and the
+  // number under your finger are the same number, which is the only version
+  // of this a viewer can use without looking anything up. Pressing the same
+  // digit again hands the camera back to the director, so one key both takes
+  // and releases a car.
   useEffect(() => {
-    if (!isLive) return
+    if (!running) return
+    const onKey = (event: KeyboardEvent): void => {
+      if (event.metaKey || event.ctrlKey || event.altKey) return
+      if (!/^[1-9]$/.test(event.key)) return
+      const subject = hudRacers[Number(event.key) - 1]
+      if (!subject) return
+      event.preventDefault()
+      noteInteraction()
+      const camera = controls.current
+      if (camera.mode === 'follow' && camera.followKey === subject.key) {
+        releaseToAuto(camera)
+        return
+      }
+      followRacer(camera, subject.key)
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [running, hudRacers, noteInteraction])
+
+  useEffect(() => {
+    if (!running) return
     const id = setInterval(() => {
       setHudRacers(
         [...(sim.racers.current ?? [])]
@@ -134,9 +188,28 @@ export function RaceScene({ isLive }: ChannelProps): React.ReactElement {
       )
     }, HUD_REFRESH_MS)
     return () => clearInterval(id)
-  }, [isLive, sim.racers])
+  }, [running, sim.racers])
 
   const racerCount = race?.racers.length ?? 0
+
+  // The driver the window is for, resolved from the live query rather than
+  // copied into state — a paint job saved here comes back through the same
+  // subscription, so the window redraws from the record it just wrote.
+  const setupDriver = useMemo<PaintShopDriver | null>(() => {
+    if (setupKey === null) return null
+    const index = race?.racers.findIndex((racer) => racer.key === setupKey) ?? -1
+    const racer = index >= 0 ? race?.racers[index] : undefined
+    if (!racer) return null
+    return {
+      key: racer.key,
+      name: racer.name,
+      index,
+      color: racer.color ?? PS1.cyan,
+      paint: racer.paint,
+      livery: racer.livery,
+      score: racer.score,
+    }
+  }, [setupKey, race])
 
   return (
     <CircuitProvider circuit={circuit}>
@@ -175,7 +248,7 @@ export function RaceScene({ isLive }: ChannelProps): React.ReactElement {
           }}
         >
           <ContextGuard onRestored={handleContextRestored} />
-          <SimDriver sim={sim} isLive={isLive} />
+          <SimDriver sim={sim} isLive={running} />
           {/* Fog lives in the PS1 shader's own uniforms, not three's fog system —
               these materials don't consume scene fog. Kept in sync in Ps1Material.
 
@@ -209,6 +282,8 @@ export function RaceScene({ isLive }: ChannelProps): React.ReactElement {
                   index={index}
                   racersRef={sim.racers}
                   color={racer.color ?? PS1.cyan}
+                  paint={racer.paint}
+                  livery={racer.livery}
                   isActive={racer.isActive}
                   onSelect={() => handleSelectRacer(racer.key)}
                 />
@@ -219,7 +294,7 @@ export function RaceScene({ isLive }: ChannelProps): React.ReactElement {
           {/* Flame and tyre smoke for the whole grid. Outside the cars'
               Suspense boundary on purpose: it needs no assets, so it should
               not be held back by one that has not loaded. */}
-          <RacerFx racersRef={sim.racers} enabled={isLive} />
+          <RacerFx racersRef={sim.racers} enabled={running} />
 
           {/* The unraced half of the pack, parked at the verges, and the
               broadcast sound. Both inside the cars' own Suspense reasoning:
@@ -228,7 +303,7 @@ export function RaceScene({ isLive }: ChannelProps): React.ReactElement {
           <Suspense fallback={null}>
             <ParkedCars />
           </Suspense>
-          <RaceAudio racersRef={sim.racers} enabled={isLive && audioOn} />
+          <RaceAudio racersRef={sim.racers} enabled={running && audioOn} />
 
           <CameraDirector
             racersRef={sim.racers}
@@ -249,7 +324,11 @@ export function RaceScene({ isLive }: ChannelProps): React.ReactElement {
           trackTitle={track.title}
           audioOn={audioOn}
           onToggleAudio={handleToggleAudio}
+          paused={paused || setupKey !== null}
+          onOpenSetup={handleOpenSetup}
         />
+
+        <PaintShopLayer driver={setupDriver} onClose={handleCloseSetup} />
       </div>
     </CircuitProvider>
   )

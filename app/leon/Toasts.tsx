@@ -4,7 +4,7 @@ import { useEffect, useRef, useState } from 'react'
 import { motion, AnimatePresence } from 'motion/react'
 import type { LeaderboardEvent } from '@/types'
 import { eventText } from '@/lib/eventText'
-import { PS1 } from './ps1/theme'
+import { ARCADE, PS1 } from './ps1/theme'
 
 const TOAST_DURATION_MS = 6_000
 const MAX_VISIBLE_TOASTS = 3
@@ -80,20 +80,31 @@ export function Toasts({ events }: { events: ReadonlyArray<LeaderboardEvent> | u
             animate={{ opacity: 1, x: 0, scale: 1 }}
             exit={{ opacity: 0, x: 60, transition: { duration: 0.25 } }}
             transition={{ type: 'spring', stiffness: 300, damping: 25 }}
-            className="ps1-plate"
+            className="arc-inset"
             style={{
-              background: PS1.panel,
-              border: `2px solid ${toast.color}`,
-              boxShadow: `0 0 12px ${toast.color}40, inset 2px 2px 0 0 ${PS1.bevelLight}, inset -2px -2px 0 0 ${PS1.bevelDark}`,
-              color: toast.color,
-              textShadow: `0 0 8px ${toast.color}60`,
+              display: 'flex',
+              alignItems: 'center',
+              gap: '10px',
+              // The kit frames a panel and lets the ground show through, so
+              // the toast is a black plate with a black frame — the event's
+              // colour appears once, as a chip, and nowhere else.
+              background: ARCADE.groundDeep,
               padding: '10px 18px',
               fontSize: 'clamp(10px, 1.2vw, 14px)',
-              fontFamily:
-                "ui-monospace, 'Cascadia Code', 'Courier New', Courier, monospace",
             }}
           >
-            {toast.text}
+            <span
+              style={{
+                width: '10px',
+                height: '10px',
+                flex: '0 0 auto',
+                background: toast.color,
+                boxShadow: `0 0 0 2px ${ARCADE.outline}`,
+              }}
+            />
+            <span className="arc-value" style={{ fontSize: 'inherit' }}>
+              {toast.text}
+            </span>
           </motion.div>
         ))}
       </AnimatePresence>

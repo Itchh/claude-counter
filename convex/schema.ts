@@ -6,6 +6,12 @@ export default defineSchema({
     key: v.string(),
     name: v.string(),
     color: v.optional(v.string()),
+    // The paint shop's two choices. Separate from `color`, which the reporter
+    // owns and only ever writes once — these belong to whoever is standing at
+    // the screen, and either may be absent for a driver who has never opened
+    // it. Validated against lib/livery.ts before they are written.
+    paint: v.optional(v.string()),
+    livery: v.optional(v.string()),
     totalTokens: v.number(),
     inputTokens: v.number(),
     outputTokens: v.number(),

@@ -80,20 +80,246 @@ export const PS1_STYLES = `
     text-transform: uppercase;
   }
 
-  /* Boot sequence: the console's diamond, redrawn as a wireframe. */
-  @keyframes ps1BootFade {
-    0% { opacity: 0; }
-    12% { opacity: 1; }
-    72% { opacity: 1; }
-    100% { opacity: 0; }
+  /* =====================================================================
+     THE ARCADE KIT
+
+     The platform's own UI kit, as CSS. Five treatments and three frames,
+     and every screen's chrome is built from them — see ARCADE in theme.ts
+     for the palette and the reasoning.
+
+     The rule that governs all of it: depth is an offset, never a blur. An
+     outline at 2px and a drop at 4px is what let these boards sit over a
+     moving picture at 240 lines, and one blurred shadow in here would undo
+     the entire thing. There is no glow in this section and there should
+     never be.
+  ===================================================================== */
+
+  /* --------------------------------------------------------------------
+     The treatments come in two weights, and choosing between them is the
+     only decision this section asks of a caller.
+
+     The kit draws its bevels at 2px and its drops at 4px, which is correct
+     for the 26-64px display type it demonstrates them on — at 640x480 those
+     offsets are a fraction of a glyph. Applied to a 10px label they are the
+     whole glyph, and the first render of this board came out with the
+     labels swallowed by their own shadows. So: light by default, heavy only
+     on the display sizes the kit actually drew.
+
+     Rule of thumb — heavy above 20px, light below.
+  -------------------------------------------------------------------- */
+
+  /* A label. Red, extruded a pixel into its own darker shade. */
+  .arc-label {
+    color: #e02020;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    white-space: nowrap;
+    text-shadow: 0 1px 0 #6b0000, 1px 1px 0 #000;
   }
-  @keyframes ps1BootSpin {
-    from { transform: rotate(0deg) scale(0.7); }
-    to { transform: rotate(360deg) scale(1); }
+  /* The same label at display size: the kit's full bevel, boxed on all four
+     sides so it holds over anything behind it. */
+  .arc-label-lg {
+    color: #e02020;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    white-space: nowrap;
+    text-shadow:
+      0 2px 0 #6b0000,
+      2px 2px 0 #000, -2px 2px 0 #000, 2px -2px 0 #000, -2px -2px 0 #000,
+      4px 4px 0 #000;
   }
-  @keyframes ps1BootRise {
-    0% { transform: translateY(24px); opacity: 0; }
-    100% { transform: translateY(0); opacity: 1; }
+  /* A name or a title: white, outlined, dropped. Display weight — this is
+     the one treatment that is always used large. */
+  .arc-label-plain {
+    color: #ffffff;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    white-space: nowrap;
+    text-shadow:
+      2px 0 0 #000, -2px 0 0 #000, 0 2px 0 #000, 0 -2px 0 #000,
+      3px 3px 0 #000;
+  }
+
+  /* A value. White, tabular, one hard pixel of drop. The workhorse, and
+     deliberately the quietest thing here — a board is mostly values. */
+  .arc-value {
+    color: #ffffff;
+    font-variant-numeric: tabular-nums;
+    text-shadow: 1px 1px 0 #000;
+  }
+  
+  /* A value that is still moving: a clock, a rate, a total counting up.
+     Amber, bevelled from below in its own shadow rather than in black, which
+     is what separates a live readout from a settled one at a glance. */
+  .arc-value-live {
+    color: #ffb000;
+    font-variant-numeric: tabular-nums;
+    text-shadow: 0 1px 0 #a05000, 1px 1px 0 #000;
+  }
+
+  /* A position. The kit's one decorative treatment: a two-stop metal ramp,
+     white on top and silver below.
+
+     The kit draws it as a gradient clipped to the glyphs, and that is where
+     two attempts went. A drop-shadow filter over a transparent fill renders
+     the shadow of the element's *box*, not of its letters — the old chrome
+     lap counter shipped exactly that and came out as a grey slab. Clipping
+     the ramp itself then worked in the abstract and disappeared in practice:
+     against this bitmap face, with smoothing off, the clipped fill covers
+     almost none of a stroke that is one pixel wide, and the board rendered
+     its positions as two faint marks.
+
+     So the ramp is built the way the hardware would have built it — as
+     stacked offsets, a white face over a silver step, boxed in black. Two
+     stops, same read, and it survives a face made of pixels. */
+  .arc-chrome {
+    color: #ffffff;
+    font-variant-numeric: tabular-nums;
+    /* Offsets are one pixel apart, not two: this face paints its glyphs at
+       roughly half the em it is set at — a 34px numeral is 17px of ink — so
+       the kit's own 2px/4px steps, measured against Press Start 2P, land as
+       a third of a stroke here and the numeral disappears into its own
+       bevel. Every treatment in this section is scaled the same way. */
+    text-shadow:
+      0 1px 0 #8a8a8a,
+      0 2px 0 #c8c8c8,
+      1px 0 0 #000, -1px 0 0 #000, 0 -1px 0 #000,
+      0 3px 0 #000,
+      2px 3px 0 #000;
+  }
+
+  /* A caption: a unit, a scale, the line under a value. Silver, one drop. */
+  .arc-caption {
+    color: #c8c8c8;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    text-shadow: 1px 1px 0 #000;
+  }
+  /* Meta. Grey, flat, no treatment at all — it is not meant to compete. */
+  .arc-meta {
+    color: #8a8a8a;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+  }
+
+  /* A framed block. The kit never fills a panel; it draws a rule around one
+     and lets the ground show through. */
+  .arc-panel {
+    background: #0a0a0a;
+    border: 2px solid #1e1e1e;
+  }
+  /* A recess: telemetry, anything backlit. Blacker than the ground, framed
+     in black rather than in grey, so it reads as cut into the face. */
+  .arc-inset {
+    background: #050505;
+    border: 3px solid #000000;
+  }
+  /* A gauge bed. The one frame that is pure black on all sides — the bar
+     inside it carries the colour, and a grey rule would compete with it. */
+  .arc-gauge {
+    background: #050505;
+    box-shadow: inset 0 0 0 2px #000000;
+    image-rendering: pixelated;
+  }
+
+  /* Telemetry: green on near-black, the LCD register. Used for live status
+     lines and nothing decorative. */
+  .arc-telemetry {
+    color: #4cff3c;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    text-shadow: 1px 1px 0 #000;
+  }
+
+  
+  /* The head and foot of a board. Flat black with one hard rule facing the
+     content — the kit's frames are drawn, never lit, so there is no gradient
+     fade into the picture the way the race console bar has. */
+  .arc-header {
+    background: #0a0a0a;
+    border-bottom: 6px solid #000000;
+    box-shadow: inset 0 -8px 0 -6px #1e1e1e;
+  }
+  .arc-footer {
+    background: #0a0a0a;
+    border-top: 6px solid #000000;
+    box-shadow: inset 0 8px 0 -6px #1e1e1e;
+  }
+
+  /* A selected row. The kit inverts a selection, but a leaderboard row
+     carries a coloured gauge that inversion would destroy — so the frame
+     goes white and the ground lifts one step instead, which is the same
+     gesture at the strength this row can take. */
+  .arc-row-on {
+    border-color: #ffffff;
+    background: #141414;
+    /* An outline as well as a border colour, because not everything this
+       lands on has a border to recolour: the timeline row is a bare wrapper
+       around two panels of its own, so recolouring its (absent) border left
+       the cursor invisible there. Inset, so it never changes the layout. */
+    outline: 2px solid #ffffff;
+    outline-offset: -2px;
+  }
+  /* The caret that used to ride beside a selected row, kept. A cursor that
+     only tints its row is a cursor you have to hunt for; the arrow is what
+     says "this one" from across a room. */
+  .arc-row-on::before {
+    content: '';
+    position: absolute;
+    left: -14px;
+    top: 50%;
+    width: 0;
+    height: 0;
+    border-top: 6px solid transparent;
+    border-bottom: 6px solid transparent;
+    border-left: 9px solid #ffb000;
+    transform: translateY(-50%);
+    animation: ps1CaretStep 0.8s steps(1, end) infinite;
+  }
+
+  /* The panel that opens under a selected row: blacker than the row, framed
+     rather than filled. */
+  .arc-drawer {
+    background: #050505;
+    border: 2px solid #1e1e1e;
+  }
+
+  /* A running band: the ticker, a status line. A slot cut in the ground,
+     ruled top and bottom, never bevelled. */
+  .arc-strip {
+    background: #050505;
+    border-top: 2px solid #1e1e1e;
+    border-bottom: 2px solid #1e1e1e;
+  }
+  /* The one cell of colour a ticker line is allowed — see Ticker.tsx. */
+  .ticker-chip {
+    display: inline-block;
+    width: 8px;
+    height: 8px;
+    margin-right: 10px;
+    box-shadow: 0 0 0 2px #000;
+  }
+
+  /* A pre-rendered car turning on its sheet. The frames are stacked
+     vertically, so the animation walks the background down one frame at a
+     time — see carSprite.ts for why the car is an image and not a canvas. */
+  .ps1-car-sprite {
+    image-rendering: pixelated;
+    background-repeat: no-repeat;
+    background-position: 0 0;
+    animation-name: ps1CarTurn;
+    animation-iteration-count: infinite;
+  }
+  /* Twelve frames, stepped — but the end stop is 109.0909%, not 100%.
+     A percentage background-position is a fraction of (container - image), so
+     with a sheet twelve frames tall the nth frame sits at n/11 of the range,
+     while steps(12) over 0-100% lands on n/12. The two only agree at n=0, and
+     everywhere else the element showed the bottom of one frame above the top
+     of the next — two half cars, which at 48px read as noise and at podium
+     size read as two cars. 12/11 of the range puts every step on a frame. */
+  @keyframes ps1CarTurn {
+    from { background-position: 0 0; }
+    to { background-position: 0 109.0909%; }
   }
 
   /* Race lane markings scroll under the karts to sell forward motion. */
@@ -230,6 +456,22 @@ export const PS1_STYLES = `
     white-space: nowrap;
   }
 
+  /* A row of the position tower, which is also the door to that driver's
+     paint shop. No plate behind it at rest — the tower sits on the picture,
+     and a panel would cost a rectangle of road to say something the ink
+     outline already says. The hover state is the smallest mark that reads as
+     a target: a hairline of the kit's own red down the leading edge. */
+  .gt-tower-row {
+    cursor: default;
+    box-shadow: inset 0 0 0 0 transparent;
+  }
+  .gt-tower-row:hover,
+  .gt-tower-row:focus-visible {
+    background: rgba(224, 32, 32, 0.14) !important;
+    box-shadow: inset 2px 0 0 0 #e02020;
+    outline: none;
+  }
+
   /* Vertical rule between instrument groups. One hairline pair, light then
      dark, which is the same two-line bevel used everywhere else. */
   .gt-divider {
@@ -308,10 +550,19 @@ export const PS1_STYLES = `
     display: inline-flex;
     align-items: center;
     justify-content: center;
-    width: 22px;
+    /* Sized to its word rather than to a 22px square: the lamps carry names
+       now, and a fixed square either clipped them or set them at a size
+       nobody could read from the room. */
+    min-width: 22px;
+    padding: 0 8px;
     height: 22px;
     font-size: 13px;
-    color: #3f3f4a;
+    text-transform: uppercase;
+    white-space: nowrap;
+    /* An unlit lamp still has to be readable — that is the whole reason the
+       cluster shows plates that are off. It sat at #3f3f4a, which was fine
+       for a single capital and illegible once the plate carried a word. */
+    color: #6c6c7a;
     background: #16161c;
     box-shadow:
       inset 1px 1px 0 0 #55555f,
@@ -326,6 +577,13 @@ export const PS1_STYLES = `
      because a tachometer needle does not overshoot on the way down. */
   .gt-needle {
     transition: transform 320ms cubic-bezier(0.22, 0.61, 0.36, 1);
+  }
+
+  /* While the subject is burning the needle is resampled every 80ms, so the
+     easing above would smear each flutter into the next and the dial would
+     read as one slow drift. Live, it tracks. */
+  .gt-needle-live {
+    transition: transform 80ms linear;
   }
 
   /* ------------------------------------------------------------------
@@ -446,6 +704,22 @@ export const PS1_STYLES = `
       inset 0 1px 0 0 rgba(255, 176, 32, 0.85),
       inset 3px 0 0 0 rgba(255, 176, 32, 0.85),
       inset 0 -1px 0 0 rgba(0, 0, 0, 0.9);
+  }
+
+  /* The tower row as the standings board draws it: no plate, no rules.
+     Written here, at the end, and as two classes rather than inline, because
+     of where the other two rules live. The plate rule further up this file
+     comes AFTER the newer base rule, so it wins on order; an inline override
+     beats both but takes the paint shop's hover hairline with it, since a
+     hover state cannot be expressed inline. Two classes and last word in the
+     file keeps the flat look and gives the hairline back. */
+  .gt-tower-row.arc-tower-row {
+    background: transparent;
+    box-shadow: none;
+  }
+  .gt-tower-row.arc-tower-row:hover,
+  .gt-tower-row.arc-tower-row:focus-visible {
+    box-shadow: inset 2px 0 0 0 #e02020;
   }
 
   /* A recess in the console: portraits, gauges, anything set into the face. */

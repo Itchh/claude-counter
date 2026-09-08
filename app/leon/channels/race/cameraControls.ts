@@ -3,6 +3,7 @@
 import { useEffect, useRef } from 'react'
 import { useThree } from '@react-three/fiber'
 import * as THREE from 'three'
+import type { Circuit } from './circuit'
 
 // The viewer's half of the camera. The director still runs the broadcast, but
 // the moment someone touches the deck the broadcast yields: drag to look
@@ -65,10 +66,24 @@ export const CLICK_TRAVEL_PX = 6
 // the camera in empty scenery within two seconds of holding W.
 const FREE_SPEED = 13
 const FREE_BOOST = 2.5
-/** Keeps free roam near the circuit — it is a camera, not a walking sim. */
-const FREE_RADIUS = 85
+/**
+ * Keeps free roam near the circuit — it is a camera, not a walking sim.
+ *
+ * Measured against the circuit rather than fixed at 85 units, which was the
+ * oval's own size: on a 450-unit mountain course that cage sat entirely
+ * inside the infield, so flying anywhere pinned the camera against an
+ * invisible wall in the middle of a hill.
+ */
+const FREE_RADIUS_FACTOR = 1.35
+/** Clearance kept above whatever is underneath, in game units. */
+const FREE_GROUND_CLEARANCE = 1.4
+/** How high above the road the free camera may climb. */
+const FREE_CEILING = 90
+/**
+ * Fallback cage when the circuit has no model to measure against — the
+ * procedural oval, whose ground is a plane at y = 0.
+ */
 const FREE_HEIGHT_MIN = 1.2
-const FREE_HEIGHT_MAX = 70
 
 /** Seconds of no input before each manual mode hands back to the director. */
 export const FOLLOW_IDLE_RETURN_S = 20
@@ -141,34 +156,65 @@ const scratchRight = new THREE.Vector3()
 const UP = new THREE.Vector3(0, 1, 0)
 
 /** Advances the free-roam rig from the keys currently held. */
-export function stepFreeRoam(state: CameraControlState, delta: number): void {
+export function stepFreeRoam(
+  state: CameraControlState,
+  circuit: Circuit,
+  delta: number,
+): void {
   const { keys } = state
   const forwardInput = (keys.has('w') ? 1 : 0) - (keys.has('s') ? 1 : 0)
   const rightInput = (keys.has('d') ? 1 : 0) - (keys.has('a') ? 1 : 0)
   const upInput = (keys.has('e') ? 1 : 0) - (keys.has('q') ? 1 : 0)
-  if (forwardInput === 0 && rightInput === 0 && upInput === 0) return
 
-  const speed = FREE_SPEED * (keys.has('shift') ? FREE_BOOST : 1) * delta
-  freeForward(state, scratchForward)
-  scratchRight.crossVectors(scratchForward, UP).normalize()
+  // The cage below runs whether or not a key is held: free roam is seeded
+  // from wherever the broadcast left the camera, and that can be somewhere
+  // the free rig is not allowed to be.
+  if (forwardInput !== 0 || rightInput !== 0 || upInput !== 0) {
+    const speed = FREE_SPEED * (keys.has('shift') ? FREE_BOOST : 1) * delta
+    freeForward(state, scratchForward)
+    scratchRight.crossVectors(scratchForward, UP).normalize()
 
-  state.freePosition
-    .addScaledVector(scratchForward, forwardInput * speed)
-    .addScaledVector(scratchRight, rightInput * speed)
-    .addScaledVector(UP, upInput * speed)
-
-  // Soft cage. Clamping the radius rather than blocking movement means flying
-  // at the wall slides along it instead of stopping dead.
-  const radius = Math.hypot(state.freePosition.x, state.freePosition.z)
-  if (radius > FREE_RADIUS) {
-    const scale = FREE_RADIUS / radius
-    state.freePosition.x *= scale
-    state.freePosition.z *= scale
+    state.freePosition
+      .addScaledVector(scratchForward, forwardInput * speed)
+      .addScaledVector(scratchRight, rightInput * speed)
+      .addScaledVector(UP, upInput * speed)
   }
+
+  // Soft cage, around the lap rather than around the origin — an imported
+  // circuit sits wherever its rip put it. Clamping the radius rather than
+  // blocking movement means flying at the wall slides along it instead of
+  // stopping dead.
+  const cage = circuit.radius * FREE_RADIUS_FACTOR
+  const fromCentre = Math.hypot(
+    state.freePosition.x - circuit.centre.x,
+    state.freePosition.z - circuit.centre.z,
+  )
+  if (fromCentre > cage) {
+    const scale = cage / fromCentre
+    state.freePosition.x = circuit.centre.x + (state.freePosition.x - circuit.centre.x) * scale
+    state.freePosition.z = circuit.centre.z + (state.freePosition.z - circuit.centre.z) * scale
+  }
+
+  // Height is measured off whatever is actually underneath, not off sea
+  // level. A mountain circuit's road can sit forty units above the origin or
+  // thirty below it, so an absolute floor of 1.2 let the camera fly straight
+  // into the hillside — and inside the terrain the world renders from behind
+  // its own single-sided surfaces, which is the "no floor" picture.
+  const ground = circuit.groundBelow(
+    state.freePosition.x,
+    state.freePosition.z,
+    state.freePosition.y,
+  )
+  const floor = Number.isNaN(ground) ? FREE_HEIGHT_MIN : ground + FREE_GROUND_CLEARANCE
+  // The ceiling is measured from the lap, not from whatever happens to be
+  // underneath. Hanging it off the local ground meant flying out over a
+  // valley dropped the ceiling by the depth of the valley and yanked the
+  // camera down with it.
+  const ceiling = circuit.centre.y + FREE_CEILING
   state.freePosition.y = THREE.MathUtils.clamp(
     state.freePosition.y,
-    FREE_HEIGHT_MIN,
-    FREE_HEIGHT_MAX,
+    Math.min(floor, ceiling),
+    Math.max(floor, ceiling),
   )
 }
 
