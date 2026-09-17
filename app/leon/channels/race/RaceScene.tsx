@@ -20,6 +20,7 @@ import { RaceHud } from './RaceHud'
 import { PaintShopLayer, type PaintShopDriver } from './PaintShop'
 import { RacerFx } from './RacerFx'
 import { RaceAudio } from './RaceAudio'
+import { chassisFor } from './cars'
 import { ParkedCars } from './ParkedCars'
 import { useRaceSim, type SimRacer } from './useRaceSim'
 import { CircuitProvider, useCircuitFor } from './CircuitContext'
@@ -41,7 +42,7 @@ import type { RaceChannelProps } from './RaceChannel'
 
 const HUD_REFRESH_MS = 500
 
-export function RaceScene({ isLive, paused = false }: RaceChannelProps): React.ReactElement {
+export function RaceScene({ isLive, paused = false, audioOn = false }: RaceChannelProps): React.ReactElement {
   // Whose paint shop is open, if anyone's. Holding it here rather than in the
   // HUD is what lets the window stop the simulation: the race and the window
   // are siblings, and only their parent can pause one for the other.
@@ -116,14 +117,6 @@ export function RaceScene({ isLive, paused = false }: RaceChannelProps): React.R
   // Which camera shot is live, so the HUD can name whose POV we're watching.
   // Updated only on a cut (every 7-12s), never per frame.
   const [activeShot, setActiveShot] = useState<ActiveShot | null>(null)
-  // Sound is opt-in. False until someone clicks the speaker chip, and the
-  // click itself is the user gesture the browser demands before audio.
-  const [audioOn, setAudioOn] = useState(false)
-
-  const handleToggleAudio = useCallback((): void => {
-    setAudioOn((current) => !current)
-  }, [])
-
   const handleShotChange = useCallback((shot: ActiveShot): void => {
     setActiveShot(shot)
   }, [])
@@ -207,7 +200,7 @@ export function RaceScene({ isLive, paused = false }: RaceChannelProps): React.R
     return {
       key: racer.key,
       name: racer.name,
-      index,
+      index: chassisFor(racer.key),
       color: racer.color ?? PS1.cyan,
       paint: racer.paint,
       livery: racer.livery,
@@ -222,6 +215,12 @@ export function RaceScene({ isLive, paused = false }: RaceChannelProps): React.R
 
         <Canvas
           key={contextEpoch}
+          // A hidden channel stays mounted so its WebGL context survives,
+          // but fiber's loop does not care about visibility: left on
+          // "always" every visited game keeps drawing at 60fps behind the
+          // one on screen. "never" parks the loop without touching the
+          // context, and the next switch resumes it on the same frame.
+          frameloop={isLive ? 'always' : 'never'}
           // dpr 1 and a fixed low internal height keep the pixel grid visible.
           dpr={1}
           flat
@@ -284,7 +283,9 @@ export function RaceScene({ isLive, paused = false }: RaceChannelProps): React.R
                 <Racer
                   key={racer.key}
                   index={index}
+                  chassis={chassisFor(racer.key)}
                   racersRef={sim.racers}
+                  name={racer.name}
                   color={racer.color ?? PS1.cyan}
                   paint={racer.paint}
                   livery={racer.livery}
@@ -326,8 +327,6 @@ export function RaceScene({ isLive, paused = false }: RaceChannelProps): React.R
           activeShot={activeShot}
           onReleaseCamera={handleReleaseCamera}
           trackTitle={track.title}
-          audioOn={audioOn}
-          onToggleAudio={handleToggleAudio}
           paused={paused || setupKey !== null}
           onOpenSetup={handleOpenSetup}
         />
@@ -374,9 +373,15 @@ function ContextGuard({ onRestored }: { onRestored: () => void }): null {
     return () => {
       canvas.removeEventListener('webglcontextlost', handleLost)
       canvas.removeEventListener('webglcontextrestored', handleRestored)
-      // Hand the context back now rather than whenever the GC gets to it.
-      const lose = gl.getContext().getExtension('WEBGL_lose_context')
-      lose?.loseContext()
+      // Deliberately NOT losing the context here. Fiber's own root teardown
+      // already calls forceContextLoss() when the Canvas unmounts; losing it
+      // a first time from this cleanup meant the context died twice — once
+      // here, once from the delayed teardown that then disposed a dead
+      // context — which poisoned the GPU channel so badly that every canvas
+      // created afterwards failed to initialise and the tab eventually hung
+      // in a native getContext call. One release, owned by fiber, is enough.
+      // This never showed while the race was the only game: a channel that
+      // is never unmounted never runs this cleanup.
     }
   }, [gl, onRestored])
 

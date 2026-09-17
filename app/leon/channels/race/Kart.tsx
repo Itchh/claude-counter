@@ -6,7 +6,7 @@ import { OBJLoader } from 'three/examples/jsm/loaders/OBJLoader.js'
 import * as THREE from 'three'
 import { createPs1Material, configurePs1Texture } from './Ps1Material'
 import { carModelFor, liveryFor, WHEEL_MODEL, SHADOW_TEXTURE_URL } from './cars'
-import { liveryShaderId } from '@/lib/livery'
+import { liveryShaderId, PAINT_STRENGTH } from '@/lib/livery'
 import { splitCarGeometry, type WheelPlacement } from './carGeometry'
 import { PS1 } from '../../ps1/theme'
 
@@ -72,17 +72,6 @@ interface KartProps {
   readonly speedBox: MotionBox
   readonly isActive: boolean
 }
-
-/**
- * How far a chosen paint respray takes the pack's own page.
- *
- * Short of 1 on purpose. The respray keeps the page's luminance and replaces
- * its hue (see uPaintMix in Ps1Material), so at 1 the glass and the lamps go
- * the colour of the bodywork too. Held here, a little of the artist's own
- * page shows through everywhere the paint is not — which is what stops eight
- * repainted cars looking like eight coloured toys.
- */
-const PAINT_STRENGTH = 0.82
 
 export function Kart({ index, color, paint = null, livery = null, speedBox, isActive }: KartProps): React.ReactElement {
   const bodyRef = useRef<THREE.Group>(null)

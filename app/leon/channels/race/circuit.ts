@@ -227,8 +227,9 @@ export function createCircuit(definition: TrackDefinition): Circuit {
   // across including wheels, so the inset has to clear that or bodies overlap
   // and the onboard camera ends up inside a rival.
   const LANE_INSET = 1.3
+  const lanes = Math.max(1, laneCount)
   const span = Math.max(0, (halfWidth - LANE_INSET) * 2)
-  const step = span / Math.max(1, laneCount - 1)
+  const step = span / Math.max(1, lanes - 1)
 
   const bounds = new THREE.Box3().setFromPoints(curve.getSpacedPoints(240))
   const size = bounds.getSize(new THREE.Vector3())
@@ -241,7 +242,13 @@ export function createCircuit(definition: TrackDefinition): Circuit {
   const scratchTangent = new THREE.Vector3()
   const scratchNormal = new THREE.Vector3()
 
-  const laneOffset = (laneIndex: number): number => -(span / 2) + laneIndex * step
+  // The field can outnumber the lanes — scoring seats up to MAX_RACERS while a
+  // narrow track declares fewer lanes — so the index wraps. Without this, lane
+  // 7 on a six-lane track sits metres outside the barrier, and the lane spring
+  // grinds that car along the rail for the whole race. Wrapping doubles up two
+  // lanes instead, which the pack's own separation already handles.
+  const laneOffset = (laneIndex: number): number =>
+    -(span / 2) + (((laneIndex % lanes) + lanes) % lanes) * step
 
   // See setHeightField on the interface. Read every frame by sampleInto,
   // so it lives in a closure rather than behind any kind of lookup.

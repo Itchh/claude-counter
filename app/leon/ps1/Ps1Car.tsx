@@ -208,6 +208,12 @@ interface Ps1CarProps {
   readonly size: number
   /** Which car in the pack's order — the driver's place on the board. */
   readonly variant: number
+  /**
+   * The driver's paint-shop choices, so the board shows the car they
+   * actually customised. Null for a driver who has never opened the shop.
+   */
+  readonly paint?: string | null
+  readonly livery?: string | null
   /** Drives turntable speed — a busy driver's car visibly revs. */
   readonly intensity?: number
   readonly label?: string
@@ -222,6 +228,8 @@ export function Ps1Car({
   color,
   size,
   variant,
+  paint = null,
+  livery = null,
   intensity = 0,
   label,
 }: Ps1CarProps): React.ReactElement {
@@ -234,7 +242,7 @@ export function Ps1Car({
     // the previous driver's sheet while the new bake is in flight — or
     // forever, if it fails — puts the wrong car against the right name.
     setSheet(null)
-    bakeCarSprite(variant, color)
+    bakeCarSprite(variant, color, paint, livery)
       .then((url) => {
         if (live) setSheet(url)
       })
@@ -246,7 +254,7 @@ export function Ps1Car({
     return () => {
       live = false
     }
-  }, [variant, color])
+  }, [variant, color, paint, livery])
 
   if (sheet) {
     return (
@@ -271,7 +279,9 @@ export function Ps1Car({
   return (
     <Ps1Model
       mesh={mesh}
-      color={color}
+      // The drawn stand-in wears the driver's chosen paint too, so a respray
+      // shows even in the seconds before the real sheet arrives.
+      color={paint ?? color}
       size={size}
       intensity={intensity}
       // Slower than the bust and dead level: a car on a turntable rotates,

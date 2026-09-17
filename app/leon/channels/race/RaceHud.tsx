@@ -2,7 +2,7 @@
 
 import { AnimatePresence, motion } from 'motion/react'
 import { fmtTokensShort } from '@/lib/formatters'
-import { ARCADE, GT, PS1, PS1_TYPE } from '../../ps1/theme'
+import { ARCADE, FONTS, GT, PS1, PS1_TYPE } from '../../ps1/theme'
 import { SCALED_SURFACE } from '../../ps1/hudScale'
 import { Tachometer, burnRateToGear, formatLapTime } from '../../ps1/gtHud'
 import { Timecode } from '../../ps1/Timecode'
@@ -65,10 +65,6 @@ interface RaceHudProps {
   readonly activeShot: ActiveShot | null
   /** Hands the camera back to the director. Wired to the resume chip. */
   readonly onReleaseCamera: () => void
-  /** Whether the broadcast's sound is armed. Muted by default. */
-  readonly audioOn: boolean
-  /** The speaker chip. The click doubles as the browser's audio gesture. */
-  readonly onToggleAudio: () => void
   /** The circuit's name. The channel runs a different one each race. */
   readonly trackTitle: string
   /** True while a cabinet window is open over the race. */
@@ -105,7 +101,7 @@ function lastLap(racer: SimRacer | undefined): number | null {
 /** A red label with the kit's hard bevel under it. Never carries a value. */
 function RedLabel({
   children,
-  size = 15,
+  size = PS1_TYPE.label,
 }: {
   readonly children: React.ReactNode
   readonly size?: number
@@ -114,6 +110,7 @@ function RedLabel({
     <span
       className="gt-label"
       style={{
+        fontFamily: FONTS.hud,
         fontSize: `${size}px`,
         letterSpacing: '0.16em',
         color: RR.label,
@@ -170,8 +167,6 @@ export function RaceHud({
   trackTitle,
   activeShot,
   onReleaseCamera,
-  audioOn,
-  onToggleAudio,
   paused,
   onOpenSetup,
 }: RaceHudProps): React.ReactElement {
@@ -230,15 +225,17 @@ export function RaceHud({
               gap: '2px',
             }}
           >
-            <RedLabel size={13}>Stage 01 · {trackTitle}</RedLabel>
+            <RedLabel size={PS1_TYPE.micro}>Stage 01 · {trackTitle}</RedLabel>
             <Minimap racersRef={racersRef} focusKey={activeShot?.racerKey ?? null} size={172} />
             <Readout label="Record" value={formatLapTime(bestLap(subject))} size={24} />
             <Readout label="Total" value={formatLapTime(subject?.totalClock ?? null)} size={24} />
           </div>
 
           {/* TOP CENTRE — the clock that is moving, and where you are in the
-              field. The two numbers a driver actually races against. */}
+              field. The two numbers a driver actually races against. Dropped
+              in the narrow layout, where it would sit on top of both corners. */}
           <div
+            className="cab-narrow-hide"
             style={{
               position: 'absolute',
               left: '50%',
@@ -353,7 +350,7 @@ export function RaceHud({
                       title={racer.name}
                       className="gt-label"
                       style={{
-                        width: '78px',
+                        width: '96px',
                         overflow: 'hidden',
                         textOverflow: 'ellipsis',
                         whiteSpace: 'nowrap',
@@ -368,7 +365,7 @@ export function RaceHud({
                     <span
                       className="gt-label"
                       style={{
-                        width: '58px',
+                        width: '66px',
                         textAlign: 'right',
                         fontSize: `${PS1_TYPE.label}px`,
                         fontVariantNumeric: 'tabular-nums',
@@ -403,8 +400,9 @@ export function RaceHud({
                     key={step}
                     className="gt-label"
                     style={{
-                      fontSize: '11px',
-                      width: '22px',
+                      fontFamily: FONTS.hud,
+                      fontSize: `${PS1_TYPE.micro}px`,
+                      width: '26px',
                       textAlign: 'center',
                       color: lit ? '#000' : ARCADE.silver,
                       background: lit ? RR.live : 'rgba(4,4,10,0.7)',
@@ -435,27 +433,10 @@ export function RaceHud({
                 </span>
               </div>
               <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginTop: '2px' }}>
-                <span className="gt-label" style={{ fontSize: '13px', color: RR.gold, ...INK_SMALL }}>
+                <span className="gt-label" style={{ fontFamily: FONTS.hud, fontSize: `${PS1_TYPE.micro}px`, color: RR.gold, ...INK_SMALL }}>
                   {isManual ? (shotKind === 'free' ? 'Free camera' : 'Following') : 'Onboard'} · lap{' '}
                   {subject?.lap ?? 0} · {fmtTokensShort(subject?.score ?? 0)} tokens
                 </span>
-                <button
-                  type="button"
-                  onClick={onToggleAudio}
-                  title={audioOn ? 'Mute the broadcast' : 'Sound on'}
-                  className={`gt-chip${audioOn ? ' gt-chip-lit' : ''}`}
-                  style={{
-                    pointerEvents: 'auto',
-                    border: 'none',
-                    font: 'inherit',
-                    width: 'auto',
-                    padding: '0 8px',
-                    letterSpacing: '0.08em',
-                    ...(audioOn ? { color: PS1.green } : {}),
-                  }}
-                >
-                  Sound
-                </button>
                 {isManual && (
                   <button
                     type="button"
@@ -467,6 +448,7 @@ export function RaceHud({
                       border: 'none',
                       boxShadow: 'inset 2px 2px 0 0 #c9c9d4, inset -2px -2px 0 0 #1c1c22',
                       color: GT.label,
+                      fontFamily: FONTS.hud,
                       fontSize: `${PS1_TYPE.micro}px`,
                       padding: '4px 10px',
                     }}
@@ -508,7 +490,7 @@ export function RaceHud({
               >
                 {(burnRate / 1000).toFixed(1)}
               </span>
-              <span className="gt-label" style={{ fontSize: '15px', color: RR.live, marginLeft: '4px', ...INK_SMALL }}>
+              <span className="gt-label" style={{ fontFamily: FONTS.hud, fontSize: `${PS1_TYPE.label - 2}px`, color: RR.live, marginLeft: '4px', ...INK_SMALL }}>
                 K t/min
               </span>
             </div>

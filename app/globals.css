@@ -48,6 +48,22 @@
   font-display: block;
 }
 
+/* NeueBit carries the body and the titles: names, values, headings, buttons.
+   A pixel face too, but drawn on a finer grid than MGS1 HUD, so it holds a
+   sentence at 17px where the HUD face only holds a label. The HUD face
+   stays on everything small — captions, meta, LCDs, the red instrument
+   labels — where its coarser grid is the point. */
+@font-face {
+  font-family: 'NeueBit';
+  src:
+    url('/ps1/fonts/NeueBit-Regular.woff2') format('woff2'),
+    url('/ps1/fonts/NeueBit-Regular.woff') format('woff'),
+    url('/ps1/fonts/NeueBit-Regular.ttf') format('truetype');
+  font-weight: normal;
+  font-style: normal;
+  font-display: block;
+}
+
 @font-face {
   font-family: 'MGS1 Codec';
   src: url('/ps1/fonts/mgs1-codec.ttf') format('truetype');
@@ -59,6 +75,7 @@
 :root {
   --font-ps1-hud: 'MGS1 HUD', ui-monospace, 'Cascadia Code', monospace;
   --font-ps1-codec: 'MGS1 Codec', ui-monospace, 'Cascadia Code', monospace;
+  --font-ps1-body: 'NeueBit', 'MGS1 HUD', ui-monospace, monospace;
 }
 
 /* A bitmap face rendered with subpixel AA grows soft edges it was drawn

@@ -34,16 +34,19 @@ const LIFT_RATE = 90
 /**
  * Lifts the camera clear of the ground beneath it. Mutates `position`.
  *
- * `floorHint` is the height the shot believes it is working at — the car, or
- * the point the rig is looking at. On a circuit with a bridge over it, that
- * is what decides which of the two surfaces under the lens is the one it
- * should be standing on.
+ * `referenceY` is the height the shot believes it is working at — the car,
+ * or the point the rig is looking at. It only matters in the rescue path
+ * below: on a circuit with a bridge over it, it is what decides which of
+ * the stacked surfaces is the one the shot should be standing on.
  */
 export function resolveCameraCollision(
   circuit: Circuit,
   position: THREE.Vector3,
   delta: number,
-  { instant = false }: { readonly instant?: boolean } = {},
+  {
+    instant = false,
+    referenceY,
+  }: { readonly instant?: boolean; readonly referenceY?: number } = {},
 ): void {
   if (!circuit.hasGround()) return
 
@@ -53,7 +56,22 @@ export function resolveCameraCollision(
   // twenty units above the lens and a valley twenty-five below, the valley is
   // nearer, so the clamp saw nothing wrong.
   const ground = circuit.groundBelow(position.x, position.z, position.y)
-  if (Number.isNaN(ground)) return
+  if (Number.isNaN(ground)) {
+    // Nothing under the lens at all: the camera is beneath the world — the
+    // exact frame this file's preamble describes, where every single-sided
+    // surface faces away and the viewer gets a screen of painted sky. This
+    // used to be the silent give-up path, which is why that frame still
+    // appeared "sometimes": a cut behind a car on a steep crest could land
+    // the rig under the terrain skirt, where there is no floor to find
+    // downwards. The rescue asks the other question — the surface nearest
+    // the height the *shot* is working at — and stands the camera on it
+    // outright. A one-frame pop beats seconds of empty sky.
+    const hint = referenceY ?? position.y
+    const surface = circuit.groundAt(position.x, position.z, hint)
+    if (Number.isNaN(surface)) return
+    position.y = Math.max(position.y, surface + GROUND_CLEARANCE)
+    return
+  }
   const floor = ground + GROUND_CLEARANCE
   if (position.y >= floor) return
 

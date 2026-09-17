@@ -23,13 +23,19 @@ import type { RacerState } from './types'
 // order and the picture only has to carry the drama.
 /** Tokens/min that maps to full speed. Above this, everyone looks the same. */
 const REFERENCE_BURN_RATE = 25_000
-/** Units per second at REFERENCE_BURN_RATE. */
-const MAX_SPEED = 30
+/**
+ * Units per second at REFERENCE_BURN_RATE. Raised from 30: at the old pace
+ * the glance-from-across-the-room test was passing on the straights and
+ * failing in the corners, where the field settled into a procession. The
+ * extra pace pushes more of the lap past the grip limit (see GRIP), which is
+ * where all the drama in this simulation actually lives.
+ */
+const MAX_SPEED = 38
 /**
  * Even an idle kart rolls. A stationary kart reads as a broken screen, and the
  * standings channel already states idleness plainly — here it just means slow.
  */
-const IDLE_SPEED = 10
+const IDLE_SPEED = 14
 /**
  * Compression exponent. Burn rates are wildly long-tailed — one person mid
  * agent-run can out-token an idle team by 50x. A square root keeps the whole
@@ -38,14 +44,14 @@ const IDLE_SPEED = 10
  */
 const SPEED_COMPRESSION = 0.5
 /** Seconds for actual speed to converge on target. Karts have inertia. */
-const SPEED_SMOOTHING = 1.5
+const SPEED_SMOOTHING = 1.2
 /**
  * Fraction of full speed above which a car is "flat out" and starts throwing
  * flame and rubber. Deliberately high: a boost effect that is always on is
  * wallpaper, and the whole job of the flame is to mark out the one driver
  * who is genuinely hammering it.
  */
-export const BOOST_THRESHOLD = 0.76
+export const BOOST_THRESHOLD = 0.72
 
 // ---------------------------------------------------------------------------
 // Cornering
@@ -63,18 +69,20 @@ export const BOOST_THRESHOLD = 0.76
 
 /**
  * Grip constant. Slip is `|curvature| × speed² / GRIP`, so this is the lateral
- * acceleration a tyre holds before the back steps out. Tuned so the straights
- * are clean, the sweepers show a lean, and only the tight corners taken at
- * full burn actually break traction.
+ * acceleration a tyre holds before the back steps out. Lowered from 34 in the
+ * same pass that raised MAX_SPEED: together they move the break-traction
+ * point from "only the hairpins at full burn" to "most corners taken with any
+ * commitment", which is what makes the field look driven rather than
+ * conveyed. The straights are still clean — slip needs curvature.
  */
-const GRIP = 34
+const GRIP = 26
 /** Sideways acceleration at full slip, in units/s². */
-const SLIDE_ACCEL = 5.2
+const SLIDE_ACCEL = 6.4
 /** How hard a car is pulled back to its own lane, and how fast that settles. */
 const LANE_SPRING = 5.5
 const LANE_DAMPING = 3.2
-/** Yaw angle at full slip, radians. ~26°: a drift, not a spin. */
-const MAX_DRIFT_YAW = 0.46
+/** Yaw angle at full slip, radians. ~33°: a big drift, still short of a spin. */
+const MAX_DRIFT_YAW = 0.58
 /** How far the front wheels turn per unit of curvature demand, radians. */
 const STEER_GAIN = 14
 const MAX_STEER = 0.5
@@ -148,6 +156,58 @@ const BUMP_YAW_DECAY = 0.55
  */
 const MAX_RECORDED_LAPS = 8
 
+// ---------------------------------------------------------------------------
+// Wrecks
+//
+// The step above a shunt. A hard enough hit — a wall taken at real sideways
+// speed, or a shunt between two cars both at pace — sends the car over: it
+// barrel-rolls, spins, hops off the road, lands, sits gathering itself, and
+// only then comes back up to speed. The whole thing is one timer and three
+// signed numbers; the renderer turns them into the tumble (see Racer.tsx),
+// and the simulation's only jobs are deciding *when* it happens and holding
+// the car slow while it does.
+//
+// The roll is always a whole number of revolutions on purpose: the car
+// finishes the tumble the right way up, which reads as "flipped and righted
+// itself" without the simulation ever having to model being upside down.
+// ---------------------------------------------------------------------------
+
+/** Sideways speed into a wall that puts the car over rather than off it. */
+const CRASH_WALL_SPEED = 4.6
+/** Combined pace of both cars, in flat-out-car units, that arms a shunt. */
+const CRASH_BUMP_PACE = 0.9
+/** Chance an armed shunt actually sends a given car over. */
+const CRASH_BUMP_CHANCE = 0.35
+/** How long a wreck lasts, start of the tumble to back under way. */
+const CRASH_DURATION_MIN = 2.1
+const CRASH_DURATION_MAX = 3.2
+/** Pace floor while wrecked. Not zero: a dead-stopped car reads as a bug. */
+const CRASH_SPEED_FLOOR = 0.07
+/** Fraction of the wreck spent tumbling and settling; the rest is recovery. */
+export const CRASH_TUMBLE_SHARE = 0.7
+/** Seconds after a wreck before the same car can be sent over again. */
+const CRASH_COOLDOWN = 11
+/** Chance a wreck is a double roll rather than a single. */
+const CRASH_DOUBLE_ROLL_CHANCE = 0.35
+
+/**
+ * Puts a car into a wreck, rolling towards `direction` (+1 is the positive
+ * lateral side). No-op while one is already running or too recently over —
+ * a car that flips on landing is a pinball, not a crash.
+ */
+function beginCrash(racer: SimRacer, direction: number): void {
+  if (racer.crashTimer > 0 || racer.crashCooldown > 0) return
+  const side = direction === 0 ? 1 : Math.sign(direction)
+  racer.crashDuration =
+    CRASH_DURATION_MIN + Math.random() * (CRASH_DURATION_MAX - CRASH_DURATION_MIN)
+  racer.crashTimer = racer.crashDuration
+  racer.crashRolls = side * (Math.random() < CRASH_DOUBLE_ROLL_CHANCE ? 2 : 1)
+  racer.crashSpin = side * (0.5 + Math.random() * 1.1)
+  racer.crashCooldown = CRASH_COOLDOWN + racer.crashDuration
+  racer.crashCount += 1
+  racer.speedScale = CRASH_SPEED_FLOOR
+}
+
 export interface SimRacer {
   key: string
   name: string
@@ -201,6 +261,22 @@ export interface SimRacer {
   wallCount: number
   /** Seconds before this car can strike a wall again. */
   wallCooldown: number
+  /**
+   * Seconds left in the current wreck, 0 when the car is on its wheels.
+   * The renderer derives the whole tumble from this and the three fields
+   * below — the simulation never stores an orientation.
+   */
+  crashTimer: number
+  /** How long this wreck was dealt, for progress. */
+  crashDuration: number
+  /** Signed whole revolutions the barrel roll turns through. */
+  crashRolls: number
+  /** Signed yaw the car picks up while tumbling, radians. */
+  crashSpin: number
+  /** Increments once per wreck, for the effects layer. Same idea as bumpCount. */
+  crashCount: number
+  /** Seconds before this car can be wrecked again. */
+  crashCooldown: number
   /**
    * Where the last impact happened, in track space: distance around the lap
    * and distance across it. The bang is drawn at the point of contact rather
@@ -352,6 +428,12 @@ export function useRaceSim({
         bumpCount: 0,
         wallCount: 0,
         wallCooldown: 0,
+        crashTimer: 0,
+        crashDuration: 1,
+        crashRolls: 0,
+        crashSpin: 0,
+        crashCount: 0,
+        crashCooldown: 0,
         impactT: 0,
         impactLateral: 0,
         lapClock: 0,
@@ -400,6 +482,20 @@ export function useRaceSim({
         racer.speedScale += (1 - racer.speedScale) * recovery
         racer.bumpCooldown = Math.max(0, racer.bumpCooldown - dt)
         racer.wallCooldown = Math.max(0, racer.wallCooldown - dt)
+        racer.crashCooldown = Math.max(0, racer.crashCooldown - dt)
+
+        // The wreck. While the car is tumbling and settling, the recovery
+        // above is overruled and the pace held on the floor; once the
+        // tumble's share of the timer has passed, the clamp lifts and the
+        // ordinary recovery climbs the car back to speed — which is the
+        // "gathers itself and rejoins" the whole sequence is for.
+        let wrecked = false
+        if (racer.crashTimer > 0) {
+          racer.crashTimer = Math.max(0, racer.crashTimer - dt)
+          const progress = 1 - racer.crashTimer / racer.crashDuration
+          wrecked = progress < CRASH_TUMBLE_SHARE
+          if (wrecked) racer.speedScale = Math.min(racer.speedScale, CRASH_SPEED_FLOOR)
+        }
 
         const blend = 1 - Math.exp(-dt / SPEED_SMOOTHING)
         racer.speed += (racer.targetSpeed * racer.speedScale - racer.speed) * blend
@@ -413,16 +509,23 @@ export function useRaceSim({
         // everything visible about a drift follows from that single number.
         const bend = curvature ? curvature(racer.t) : 0
         const demand = (bend * racer.speed * racer.speed) / GRIP
-        const slip = Math.max(-1, Math.min(1, demand))
+        // A tumbling car is not cornering. Its tyres are intermittently in
+        // the air, so the slip machinery is switched off and its sideways
+        // motion just damps out where the wreck threw it.
+        const slip = wrecked ? 0 : Math.max(-1, Math.min(1, demand))
         racer.driftLoad = Math.abs(slip)
 
         // Thrown towards the outside of the bend — the opposite side from the
         // one the road turns towards, hence the minus.
         racer.lateralVelocity -= slip * SLIDE_ACCEL * dt
         // And pulled back to its own lane, damped so it settles rather than
-        // weaving down the following straight.
-        racer.lateralVelocity += (home - racer.lateral) * LANE_SPRING * dt
-        racer.lateralVelocity -= racer.lateralVelocity * Math.min(1, LANE_DAMPING * dt)
+        // weaving down the following straight — except mid-wreck, where the
+        // car stays where it was thrown and just sheds what motion it has.
+        if (!wrecked) {
+          racer.lateralVelocity += (home - racer.lateral) * LANE_SPRING * dt
+        }
+        racer.lateralVelocity -=
+          racer.lateralVelocity * Math.min(1, (wrecked ? LANE_DAMPING * 2 : LANE_DAMPING) * dt)
         racer.lateral += racer.lateralVelocity * dt
 
         // The barrier. Measured off the model, so the limit is the rail that
@@ -444,6 +547,9 @@ export function useRaceSim({
               racer.wallCount += 1
               racer.impactT = racer.t
               racer.impactLateral = racer.lateral
+              // Hard enough into the rail and the car goes over it — rolling
+              // back towards the road, because the rail is what launched it.
+              if (closing > CRASH_WALL_SPEED) beginCrash(racer, -side)
             }
           }
         }
@@ -458,10 +564,9 @@ export function useRaceSim({
         // the corner asks for an angle (curvature times gain), and the drift
         // subtracts the body's own yaw — wheels point where the car is
         // *going*, so a sideways body shows counter-steer automatically.
-        const steerTarget = Math.max(
-          -MAX_STEER,
-          Math.min(MAX_STEER, bend * STEER_GAIN - racer.yaw),
-        )
+        const steerTarget = wrecked
+          ? 0
+          : Math.max(-MAX_STEER, Math.min(MAX_STEER, bend * STEER_GAIN - racer.yaw))
         racer.steer += (steerTarget - racer.steer) * (1 - Math.exp(-dt / STEER_SMOOTHING))
 
         // --- distance along the lap ---------------------------------------
@@ -551,6 +656,16 @@ function resolveContacts(field: ReadonlyArray<SimRacer>, trackLength: number): v
       b.impactT = contactT
       a.impactLateral = contactLateral
       b.impactLateral = contactLateral
+
+      // A shunt between two cars both carrying real pace can put one — or
+      // on a bad day both — over. Each rolls away from the contact, and the
+      // dice are thrown per car: two cars binned by every big hit would
+      // empty the field, and a crash that never happens is wallpaper the
+      // other way.
+      if ((a.speed + b.speed) / MAX_SPEED > CRASH_BUMP_PACE) {
+        if (Math.random() < CRASH_BUMP_CHANCE) beginCrash(a, side)
+        if (Math.random() < CRASH_BUMP_CHANCE) beginCrash(b, -side)
+      }
     }
   }
 }

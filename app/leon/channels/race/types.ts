@@ -6,6 +6,10 @@ export interface RacerState {
   readonly key: string
   readonly name: string
   readonly color: string | null
+  /** Paint-shop hex, null until the driver has opened the shop. */
+  readonly paint: string | null
+  /** Livery pattern id from lib/livery.ts, null until chosen. */
+  readonly livery: string | null
   readonly rank: number
   readonly score: number
   readonly rawTokens: number

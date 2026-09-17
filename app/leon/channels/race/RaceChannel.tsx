@@ -3,6 +3,8 @@
 import { Suspense, lazy } from 'react'
 import { GT, PS1, PS1_TYPE } from '../../ps1/theme'
 import { SCALED_SURFACE } from '../../ps1/hudScale'
+import { GameTitle } from '../../ps1/GameTitle'
+import { RACE_TITLE } from '../../ps1/titleSpecs'
 
 export interface RaceChannelProps {
   /** True while the race is the thing on screen. Scenes idle when false. */
@@ -15,6 +17,13 @@ export interface RaceChannelProps {
    * declare a state it does not have.
    */
   readonly paused?: boolean
+  /**
+   * Whether the broadcast's sound is armed. Off by default and set from the
+   * cabinet's menu — the click there is the user gesture the browser demands
+   * before audio, which is why the switch is a menu item rather than a
+   * setting restored on load.
+   */
+  readonly audioOn?: boolean
 }
 
 // three/R3F is ~600kb, so it is loaded only when this channel is first tuned
@@ -30,9 +39,16 @@ const RaceScene = lazy(async () => ({
 
 export function RaceChannel(props: RaceChannelProps): React.ReactElement {
   return (
-    <Suspense fallback={<RaceSkeleton />}>
-      <RaceScene {...props} />
-    </Suspense>
+    <div style={{ position: 'relative', width: '100%', height: '100%' }}>
+      <Suspense fallback={<RaceSkeleton />}>
+        <RaceScene {...props} />
+      </Suspense>
+
+      {/* The game's own start screen. It sits over the skeleton as well as
+          the scene, so the flag is what covers the three/R3F load rather
+          than a bare placeholder. */}
+      <GameTitle spec={RACE_TITLE} active={props.isLive} />
+    </div>
   )
 }
 

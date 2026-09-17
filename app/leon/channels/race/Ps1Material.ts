@@ -33,6 +33,16 @@ const VERTEX_SHADER = /* glsl */ `
   uniform float uJitterStrength;
   uniform vec3 uLightDirection;
   uniform float uAmbient;
+  /**
+   * Texels per world unit for a surface with no UVs of its own; 0 reads the
+   * mesh's UV attribute as ever. A source model's untextured geometry — the
+   * rips' backdrop mountains, a marketplace track's barriers — ships no
+   * TEXCOORD at all, so a page assigned to it in the registry needs its
+   * coordinates invented here. Planar projection along the face's dominant
+   * axis, chosen per vertex: the seams that leaves on corners are exactly
+   * the artefact the era's own auto-mapped cliffs wore.
+   */
+  uniform float uWorldUvScale;
 
   // Two copies of everything that crosses a triangle: one premultiplied by w
   // so the hardware's perspective correction cancels out, one left alone. The
@@ -55,6 +65,28 @@ const VERTEX_SHADER = /* glsl */ `
     vLocal = position;
     vec4 viewPosition = modelViewMatrix * vec4(position, 1.0);
     vec4 clipPosition = projectionMatrix * viewPosition;
+
+    // World-projected UVs for geometry that has none. The dominant axis of
+    // the world normal picks which plane the page lies in, so cliff faces
+    // and their tops both receive the texture square-on rather than smeared.
+    vec2 mappedUv = uv;
+    if (uWorldUvScale > 0.0) {
+      vec3 worldPosition = (modelMatrix * vec4(position, 1.0)).xyz;
+      // The rotation part of the model matrix, column by column. GLSL ES
+      // 1.00 — which is what a ShaderMaterial compiles as — has no
+      // matrix-from-matrix constructor, and mat3(modelMatrix) written here
+      // failed to compile, taking every surface in the scene down with it.
+      mat3 modelRotation = mat3(modelMatrix[0].xyz, modelMatrix[1].xyz, modelMatrix[2].xyz);
+      vec3 axis = abs(modelRotation * normal);
+      if (axis.y >= axis.x && axis.y >= axis.z) {
+        mappedUv = worldPosition.xz;
+      } else if (axis.x >= axis.z) {
+        mappedUv = worldPosition.zy;
+      } else {
+        mappedUv = worldPosition.xy;
+      }
+      mappedUv *= uWorldUvScale;
+    }
 
     // Snap in normalised device space, then restore w. Dividing and
     // re-multiplying is what ties the jitter to distance, exactly as the
@@ -88,11 +120,11 @@ const VERTEX_SHADER = /* glsl */ `
     // Lighting and fog depth go through the same premultiply, because the
     // hardware had no way to treat them differently either.
     vAffineW = clipPosition.w;
-    vUv = uv * clipPosition.w;
+    vUv = mappedUv * clipPosition.w;
     vColor = shade * clipPosition.w;
     vFogDepth = -viewPosition.z * clipPosition.w;
 
-    vUvLinear = uv;
+    vUvLinear = mappedUv;
     vColorLinear = shade;
     vFogDepthLinear = -viewPosition.z;
   }
@@ -331,6 +363,12 @@ export interface Ps1MaterialOptions {
   readonly ambient?: number
   readonly side?: THREE.Side
   /**
+   * Texels-per-world-unit for a surface whose mesh carries no UVs, expressed
+   * as 1 / (world units per tile). 0 — the default — reads the mesh's own UV
+   * attribute. See uWorldUvScale in the vertex shader.
+   */
+  readonly worldUvScale?: number
+  /**
    * Paint a livery on this surface, in the car's own object space.
    *
    * Only the car bodies pass one. `bounds` is the body geometry's own
@@ -491,6 +529,7 @@ export function createPs1Material(options: Ps1MaterialOptions): THREE.ShaderMate
           : new THREE.Vector3(1, 1, 1),
       },
       uAmbient: { value: options.ambient ?? DEFAULT_AMBIENT },
+      uWorldUvScale: { value: options.worldUvScale ?? 0 },
       uLightDirection: { value: new THREE.Vector3(0.4, 1, 0.25).normalize() },
     },
   })

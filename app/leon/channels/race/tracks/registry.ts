@@ -191,9 +191,19 @@ const DRIFT_YARD = fromBaked(driftYard as BakedTrack, {
       distant: true,
       alphaTest: 0.36,
     },
-    // Barriers, fencing and gantries. Untextured in the source; concrete-white
-    // in the sun, as every trackside wall of the era was.
-    Metal: { color: '#e2e2e6', ambient: 0.78 },
+    // Barriers, fencing and gantries. Untextured in the source, which
+    // rendered them as one flat grey sheet — so they carry a generated
+    // concrete page now (see scripts/makeSurfaceTextures.mjs), projected in
+    // world space because the geometry ships no UVs. Panel seams every few
+    // metres, pulled a little towards the sunlit white the flat colour was.
+    Metal: {
+      color: '#e2e2e6',
+      tint: 0.25,
+      ambient: 0.78,
+      textureUrl: '/ps1/textures/concrete.png',
+      textureScale: 7,
+      distant: true,
+    },
   },
 })
 
@@ -230,20 +240,65 @@ const GOLDEN_SKY: TrackSky = {
  * machine the assets actually shipped on — so the registry's whole job is a
  * faint glaze and mipmaps. Masks, sidedness and flat colours are read off
  * the source materials per chunk; see TrackModel.
+ *
+ * With one exception: the alpha test is a blanket default rather than read
+ * off the material, because the materials lie about it. Several of Bushido
+ * Peak's tree chunks declare themselves OPAQUE while their pages carry a
+ * full cut-out mask, so the mask-detection in TrackModel never fired and
+ * whole trees rendered as the atlas's solid green background. The blanket
+ * threshold is safe precisely because of what an alpha test is: on a
+ * genuinely opaque page every texel's alpha is 1 and the test discards
+ * nothing at all.
  */
-const RIP_SURFACE_DEFAULTS = { tint: 0.05, ambient: 0.9, distant: true } as const
+const RIP_SURFACE_DEFAULTS = {
+  tint: 0.05,
+  ambient: 0.9,
+  distant: true,
+  alphaTest: 0.3,
+} as const
 
 const LONE_PEAK = fromBaked(lonePeak as BakedTrack, {
   title: 'Lone Peak',
   sky: ALPINE_SKY,
+  // Six lanes on a narrowed width, not eight on the nominal. A mountain
+  // road's real width swings around the bake's normalised 7.4, and the
+  // corridor can only hold cars inboard where it found a barrier to measure
+  // — on the open verges the outer pair of an eight-lane grid sat on the
+  // grass every lap. Racing on 6.0 keeps the whole field on tarmac through
+  // the swings at the cost of a tighter pack, which on a drift channel is
+  // not a cost at all.
+  laneCount: 6,
+  roadHalfWidth: 6.0,
   surfaces: {
     // The rip's own backdrop — the distant mountains and valley town. The
     // game shipped this chunk untextured (it was designed to be read through
     // haze), so left alone it wore the pipeline's deliberate fallback grey
-    // and filled half of every wide shot with "unfinished". Painted here to
-    // sit between the terrain and ALPINE_SKY's mid stop, which is what a
-    // backdrop is: scenery already half-way to being sky.
-    Merged_materials: { color: '#a8bcd6', ambient: 1, distant: true },
+    // and filled half of every wide shot with "unfinished". It carries a
+    // generated alpine rock page now (scripts/makeSurfaceTextures.mjs),
+    // world-projected since the chunk has no UVs, and still pulled hard
+    // towards the haze tint — a backdrop is scenery half-way to being sky,
+    // but it should be *rock* dissolving into sky, not a flat card.
+    // The tint is held low and the tile fairly tight because this chunk is
+    // not only backdrop: stretches of the playable valley floor belong to it
+    // too, and under the old flat #a8bcd6 they read as a lake the cars were
+    // driving across. The rock has to carry those sections up close; the
+    // haze can have them back at distance, where the fog does the tinting.
+    Merged_materials: {
+      color: '#a8bcd6',
+      tint: 0.28,
+      ambient: 1,
+      distant: true,
+      textureUrl: '/ps1/textures/alpine-rock.png',
+      textureScale: 34,
+    },
+    // Leaf litter. In the source game this was a decal — a scatter of fallen
+    // leaves on a transparent page, laid over the road and verges in flat
+    // quads. The rip flattened the page to RGB, so the transparent ground
+    // came out as solid dark green and every quad rendered as a green rug
+    // sitting on the dirt. There is no alpha left to mask it back into
+    // leaves, so the surface is dropped: a road with no leaves on it beats
+    // one with rugs.
+    material_063_21: { hidden: true },
   },
   surfaceDefaults: RIP_SURFACE_DEFAULTS,
 })
@@ -251,10 +306,21 @@ const LONE_PEAK = fromBaked(lonePeak as BakedTrack, {
 const BUSHIDO_PEAK = fromBaked(bushidoPeak as BakedTrack, {
   title: 'Bushido Peak',
   sky: GOLDEN_SKY,
+  // Six lanes on a narrowed width, for the same reason as Lone Peak.
+  laneCount: 6,
+  roadHalfWidth: 6.0,
   surfaces: {
     // Same story as Lone Peak's backdrop, in this valley's own light: warm
-    // rock headed towards GOLDEN_SKY's horizon rather than alpine haze.
-    Merged_materials: { color: '#b08a66', ambient: 1, distant: true },
+    // sandstone headed towards GOLDEN_SKY's horizon rather than alpine haze,
+    // textured with the generated warm rock page for the same reason.
+    Merged_materials: {
+      color: '#b08a66',
+      tint: 0.28,
+      ambient: 1,
+      distant: true,
+      textureUrl: '/ps1/textures/warm-rock.png',
+      textureScale: 34,
+    },
   },
   surfaceDefaults: RIP_SURFACE_DEFAULTS,
 })

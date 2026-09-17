@@ -1,8 +1,9 @@
 'use client'
 
 import { useEffect, useState } from 'react'
-import { ARCADE, FONTS, GT, PS1 } from '../ps1/theme'
+import { ARCADE, FONTS, GT, PS1, UI_TYPE } from '../ps1/theme'
 import { REPORTER_COMMANDS, type CommandTone, type ReporterCommand } from './reporterCommands'
+import { gameInfo, type CabinetScreen } from './games'
 
 // Everything the cabinet knows how to tell a person, in one place.
 //
@@ -39,6 +40,7 @@ const CONTROL_GROUPS: ReadonlyArray<ControlGroup> = [
     entries: [
       { keys: ['L'], label: 'Leaderboard', detail: 'Open the board over the race. Same as the button.' },
       { keys: ['M'], label: 'Menu', detail: 'This window.' },
+      { keys: ['G'], label: 'Game', detail: 'Flick to the next cartridge without visiting the shelf.' },
       { keys: ['Esc'], label: 'Close', detail: 'Close whichever window is open and resume the broadcast.' },
       { keys: ['1–9'], label: 'Player', detail: 'Ride with a driver by their place in the order. Same digit again hands the camera back.' },
     ],
@@ -60,8 +62,8 @@ const CONTROL_GROUPS: ReadonlyArray<ControlGroup> = [
  *  sentence. */
 const PROSE: React.CSSProperties = {
   display: 'block',
-  fontFamily: FONTS.hud,
-  fontSize: '13px',
+  fontFamily: FONTS.body,
+  fontSize: `${UI_TYPE.prose}px`,
   lineHeight: 1.6,
   letterSpacing: '0.03em',
   color: GT.valueDim,
@@ -87,10 +89,10 @@ function KeyCap({ glyph }: { readonly glyph: string }): React.ReactElement {
     <span
       className="gt-label"
       style={{
-        fontFamily: FONTS.hud,
-        fontSize: '14px',
-        minWidth: '30px',
-        height: '30px',
+        fontFamily: FONTS.body,
+        fontSize: `${UI_TYPE.body}px`,
+        minWidth: '34px',
+        height: '34px',
         padding: '0 8px',
         display: 'inline-flex',
         alignItems: 'center',
@@ -128,7 +130,7 @@ function CommandRow({ entry }: { readonly entry: ReporterCommand }): React.React
   return (
     <div style={{ borderLeft: `4px solid ${color}`, paddingLeft: '14px', display: 'flex', flexDirection: 'column', gap: '6px' }}>
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '12px' }}>
-        <span className="gt-label" style={{ fontFamily: FONTS.hud, fontSize: '15px', color }}>
+        <span className="gt-label" style={{ fontFamily: FONTS.body, fontSize: `${UI_TYPE.body}px`, color }}>
           {entry.label}
         </span>
         <button
@@ -136,13 +138,13 @@ function CommandRow({ entry }: { readonly entry: ReporterCommand }): React.React
           onClick={() => void handleCopy()}
           className="gt-label"
           style={{
-            height: '32px',
+            height: '36px',
             padding: '0 14px',
             border: 'none',
             background: copied ? color : '#2c2c34',
             color: copied ? '#000' : ARCADE.silver,
-            fontFamily: FONTS.hud,
-            fontSize: '12px',
+            fontFamily: FONTS.body,
+            fontSize: `${UI_TYPE.caption}px`,
             letterSpacing: '0.14em',
             boxShadow: copied ? 'none' : `inset 2px 2px 0 0 ${GT.metalHi}, inset -2px -2px 0 0 ${GT.metalLo}`,
           }}
@@ -158,7 +160,7 @@ function CommandRow({ entry }: { readonly entry: ReporterCommand }): React.React
         style={{
           display: 'block',
           fontFamily: FONTS.hud,
-          fontSize: '13px',
+          fontSize: `${UI_TYPE.prose}px`,
           lineHeight: 1.5,
           color: ARCADE.telemetry,
           background: ARCADE.telemetryBed,
@@ -174,21 +176,148 @@ function CommandRow({ entry }: { readonly entry: ReporterCommand }): React.React
   )
 }
 
-export function MenuWindow(): React.ReactElement {
+interface MenuWindowProps {
+  /** What the screen is showing: a game, or the shelf itself. */
+  readonly screen: CabinetScreen
+  readonly onBackToShelf: () => void
+  /** Whether the broadcast's sound is armed. */
+  readonly audioOn: boolean
+  readonly onToggleAudio: () => void
+}
+
+/** The two options share one button treatment; this is it. */
+function optionStyle(isOn: boolean): React.CSSProperties {
+  return {
+    textAlign: 'left',
+    border: 'none',
+    padding: '12px 14px',
+    display: 'flex',
+    flexDirection: 'column',
+    gap: '5px',
+    background: isOn ? '#2c2c34' : ARCADE.ground,
+    boxShadow: isOn
+      ? `inset 0 0 0 2px ${ARCADE.amber}, 2px 2px 0 ${ARCADE.outline}`
+      : `inset 2px 2px 0 0 ${GT.metalHi}, inset -2px -2px 0 0 ${GT.metalLo}`,
+  }
+}
+
+/**
+ * Sound. It used to be a chip on the race HUD, which put a setting in the
+ * instrument cluster and cost a corner of the picture to say something that
+ * is set once. Here it is a menu item — and a click here is still the user
+ * gesture the browser needs before it will play anything.
+ */
+function SoundSelect({
+  audioOn,
+  onToggleAudio,
+}: Pick<MenuWindowProps, 'audioOn' | 'onToggleAudio'>): React.ReactElement {
+  const options = [
+    { on: false, name: 'Sound off', blurb: 'The broadcast runs silent.' },
+    { on: true, name: 'Sound on', blurb: 'Engines and the crowd, from the car the camera is on.' },
+  ] as const
   return (
-    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '2px', background: ARCADE.rule }}>
+    <section style={{ background: ARCADE.groundDeep, padding: '18px 20px', display: 'flex', flexDirection: 'column', gap: '12px' }}>
+      <span className="gt-label" style={{ fontFamily: FONTS.body, fontSize: `${UI_TYPE.heading}px`, color: ARCADE.label }}>
+        Sound
+      </span>
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px' }}>
+        {options.map((option) => {
+          const isOn = option.on === audioOn
+          return (
+            <button
+              key={option.name}
+              type="button"
+              aria-pressed={isOn}
+              onClick={() => {
+                if (!isOn) onToggleAudio()
+              }}
+              style={optionStyle(isOn)}
+            >
+              <span
+                className="gt-label"
+                style={{ fontFamily: FONTS.body, fontSize: `${UI_TYPE.body}px`, color: isOn ? ARCADE.amber : ARCADE.value }}
+              >
+                {isOn ? '\u25B8 ' : ''}
+                {option.name}
+              </span>
+              <span style={PROSE}>{option.blurb}</span>
+            </button>
+          )
+        })}
+      </div>
+    </section>
+  )
+}
+
+/**
+ * The way to another game is the shelf, not a list: the menu names what is
+ * in the machine and offers to put it back. The library itself lives in
+ * games.ts, and the shelf draws it.
+ */
+function ShelfRow({ screen, onBackToShelf }: Pick<MenuWindowProps, 'screen' | 'onBackToShelf'>): React.ReactElement {
+  const current = screen !== 'shelf' ? gameInfo(screen) : null
+  return (
+    <section style={{ background: ARCADE.groundDeep, padding: '18px 20px', display: 'flex', flexDirection: 'column', gap: '12px' }}>
+      <span className="gt-label" style={{ fontFamily: FONTS.body, fontSize: `${UI_TYPE.heading}px`, color: ARCADE.label }}>
+        Game
+      </span>
+      <div style={{ display: 'flex', alignItems: 'stretch', gap: '10px' }}>
+        <div style={{ ...optionStyle(true), flex: 1, cursor: 'default' }}>
+          <span
+            className="gt-label"
+            style={{ fontFamily: FONTS.body, fontSize: `${UI_TYPE.body}px`, color: ARCADE.amber }}
+          >
+            {current ? `▸ ${current.name}` : '▸ The Shelf'}
+          </span>
+          <span style={PROSE}>
+            {current ? current.blurb : 'Browsing the library.'}
+          </span>
+        </div>
+        {current !== null && (
+          <button
+            type="button"
+            onClick={onBackToShelf}
+            style={{ ...optionStyle(false), flex: 1, justifyContent: 'center' }}
+          >
+            <span
+              className="gt-label"
+              style={{ fontFamily: FONTS.body, fontSize: `${UI_TYPE.body}px`, color: ARCADE.value }}
+            >
+              Back to Shelf
+            </span>
+            <span style={PROSE}>Put the cartridge back and pick another game.</span>
+          </button>
+        )}
+      </div>
+    </section>
+  )
+}
+
+export function MenuWindow({ screen, onBackToShelf, audioOn, onToggleAudio }: MenuWindowProps): React.ReactElement {
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: '2px', background: ARCADE.rule }}>
+      <ShelfRow screen={screen} onBackToShelf={onBackToShelf} />
+      <SoundSelect audioOn={audioOn} onToggleAudio={onToggleAudio} />
+      <MenuColumns />
+    </div>
+  )
+}
+
+function MenuColumns(): React.ReactElement {
+  return (
+    <div className="cab-menu-grid" style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '2px', background: ARCADE.rule }}>
       <section style={{ background: ARCADE.groundDeep, padding: '18px 20px', display: 'flex', flexDirection: 'column', gap: '16px' }}>
-        <span className="gt-label" style={{ fontFamily: FONTS.hud, fontSize: '15px', color: ARCADE.label }}>
+        <span className="gt-label" style={{ fontFamily: FONTS.body, fontSize: `${UI_TYPE.heading}px`, color: ARCADE.label }}>
           Controls
         </span>
         {CONTROL_GROUPS.map((group) => (
           <div key={group.title} style={{ display: 'flex', flexDirection: 'column', gap: '9px' }}>
-            <span className="arc-caption" style={{ fontSize: '12px' }}>
+            <span className="arc-caption" style={{ fontSize: `${UI_TYPE.caption}px` }}>
               {group.title}
             </span>
             {group.entries.map((entry) => (
               <div key={entry.label} style={{ display: 'flex', alignItems: 'flex-start', gap: '12px' }}>
-                <span style={{ display: 'flex', gap: '3px', minWidth: '128px' }}>
+                <span style={{ display: 'flex', gap: '3px', minWidth: '150px', flexWrap: 'wrap' }}>
                   {entry.keys.map((glyph) => (
                     <KeyCap key={`${entry.label}-${glyph}`} glyph={glyph} />
                   ))}
@@ -196,7 +325,7 @@ export function MenuWindow(): React.ReactElement {
                 <span style={{ flex: 1 }}>
                   <span
                     className="gt-label"
-                    style={{ display: 'block', fontFamily: FONTS.hud, fontSize: '15px', color: ARCADE.value }}
+                    style={{ display: 'block', fontFamily: FONTS.body, fontSize: `${UI_TYPE.body}px`, color: ARCADE.value }}
                   >
                     {entry.label}
                   </span>
@@ -210,7 +339,7 @@ export function MenuWindow(): React.ReactElement {
 
       <section style={{ background: ARCADE.groundDeep, padding: '18px 20px', display: 'flex', flexDirection: 'column', gap: '16px' }}>
         <div>
-          <span className="gt-label" style={{ fontFamily: FONTS.hud, fontSize: '15px', color: ARCADE.label }}>
+          <span className="gt-label" style={{ fontFamily: FONTS.body, fontSize: `${UI_TYPE.heading}px`, color: ARCADE.label }}>
             Get on the board
           </span>
           <span style={{ ...PROSE, marginTop: '6px' }}>

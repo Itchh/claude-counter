@@ -1,6 +1,7 @@
 'use client'
 
 import { useEffect, useMemo } from 'react'
+import { useLoader } from '@react-three/fiber'
 import { useGLTF } from '@react-three/drei'
 import * as THREE from 'three'
 import { createPs1Material, configurePs1Texture } from './Ps1Material'
@@ -39,6 +40,37 @@ export function TrackModel({ definition }: TrackModelProps): React.ReactElement 
 
   const { scene } = useGLTF(path)
 
+  // The generated pages for surfaces the model shipped bare, loaded through
+  // the same Suspense the model itself loads through. They used to arrive
+  // async into an already-mounted material, which rendered those surfaces
+  // black until the PNG landed — and left them black for good if it never
+  // did. Suspending alongside the GLB means the circuit appears once, whole.
+  const replacementUrls = useMemo(() => {
+    const urls = new Set<string>()
+    for (const surface of Object.values(definition.surfaces)) {
+      if (surface.textureUrl) urls.add(surface.textureUrl)
+    }
+    if (definition.surfaceDefaults?.textureUrl) urls.add(definition.surfaceDefaults.textureUrl)
+    if (FALLBACK_SURFACE.textureUrl) urls.add(FALLBACK_SURFACE.textureUrl)
+    return [...urls].sort()
+  }, [definition])
+  const replacementTextures = useLoader(THREE.TextureLoader, replacementUrls)
+  const texturesByUrl = useMemo(() => {
+    const byUrl = new Map<string, THREE.Texture>()
+    replacementUrls.forEach((url, index) => {
+      const texture = replacementTextures[index]
+      // Repeat wrapping because the shader projects these across hundreds of
+      // world units; mipmapped because everything they cover recedes. The
+      // loader caches by URL, so this configures the same instance every
+      // mount — harmless, the settings never differ.
+      texture.wrapS = THREE.RepeatWrapping
+      texture.wrapT = THREE.RepeatWrapping
+      configurePs1Texture(texture, { distant: true, anisotropy: definition.render.anisotropy })
+      byUrl.set(url, texture)
+    })
+    return byUrl
+  }, [replacementUrls, replacementTextures, definition.render.anisotropy])
+
   // Cloned because useGLTF caches by URL: mutating the cached scene's
   // materials would corrupt the copy handed to the next mount, and this
   // channel remounts on every WebGL context loss.
@@ -55,8 +87,8 @@ export function TrackModel({ definition }: TrackModelProps): React.ReactElement 
   }, [scene, definition.worldScale])
 
   const materials = useMemo(
-    () => applyTrackSurfaces(model, definition),
-    [model, definition],
+    () => applyTrackSurfaces(model, definition, texturesByUrl),
+    [model, definition, texturesByUrl],
   )
 
   useEffect(() => {
@@ -460,6 +492,7 @@ function smoothCorridor(centre: Float32Array, halfWidth: Float32Array): void {
 function applyTrackSurfaces(
   root: THREE.Object3D,
   definition: TrackDefinition,
+  texturesByUrl: ReadonlyMap<string, THREE.Texture>,
 ): ReadonlyArray<THREE.Material> {
   const { surfaces } = definition
   const created: THREE.Material[] = []
@@ -550,6 +583,15 @@ function applyTrackSurfaces(
       const sourceDoubleSided = standard?.side === THREE.DoubleSide || sourceMasked
       const sourceColor = standard && !map ? `#${standard.color.getHexString()}` : undefined
 
+      // A page for a surface the model shipped bare. World-projected — the
+      // geometry has no UVs — and already loaded: the component suspended on
+      // every page the definition names before this ran.
+      const replacementMap =
+        !map && surface.textureUrl ? (texturesByUrl.get(surface.textureUrl) ?? null) : null
+      // The projection reads world position after the model matrix, so the
+      // scale is already in final game units whatever `worldScale` did.
+      const worldUvScale = replacementMap ? 1 / (surface.textureScale ?? 12) : 0
+
       material = createPs1Material({
         // With a texture the base colour becomes the tint pulled over it, so
         // the map has to arrive at full strength and be pulled towards the
@@ -560,8 +602,9 @@ function applyTrackSurfaces(
               distant: surface.distant,
               anisotropy: definition.render.anisotropy,
             })
-          : undefined,
-        tint: map ? (surface.tint ?? 0.3) : 0,
+          : (replacementMap ?? undefined),
+        worldUvScale,
+        tint: map || replacementMap ? (surface.tint ?? 0.3) : 0,
         alphaTest: map ? (surface.alphaTest ?? sourceAlphaTest) : 0,
         // Blended as well as masked, for the handful of surfaces a rip draws
         // with soft edges: the threshold removes the page's empty background
@@ -597,5 +640,19 @@ function applyTrackSurfaces(
  */
 const FOLIAGE_ALPHA_TEST = 0.16
 
-/** Neutral grey. Loud enough to notice, quiet enough not to ruin a shot. */
-const FALLBACK_SURFACE: TrackSurface = { color: '#9a9ab5', ambient: 0.6 }
+/**
+ * The surface an unlisted, untextured material falls back to. It used to be a
+ * bare grey, which was meant as a signal and read on screen as a missing
+ * asset — so it carries the generated concrete page now, still under its own
+ * lavender-grey tint: finished enough not to ruin a shot, tinted oddly
+ * enough that an unnamed material can still be spotted and named.
+ */
+const FALLBACK_SURFACE: TrackSurface = {
+  color: '#9a9ab5',
+  tint: 0.4,
+  ambient: 0.6,
+  textureUrl: '/ps1/textures/concrete.png',
+  textureScale: 7,
+  distant: true,
+}
+
