@@ -190,6 +190,7 @@ export const PS1_STYLES = `
 
   /* A caption: a unit, a scale, the line under a value. Silver, one drop. */
   .arc-caption {
+    font-family: var(--font-ps1-hud);
     color: #c8c8c8;
     text-transform: uppercase;
     letter-spacing: 0.08em;
@@ -197,6 +198,7 @@ export const PS1_STYLES = `
   }
   /* Meta. Grey, flat, no treatment at all — it is not meant to compete. */
   .arc-meta {
+    font-family: var(--font-ps1-hud);
     color: #8a8a8a;
     text-transform: uppercase;
     letter-spacing: 0.06em;
@@ -486,6 +488,7 @@ export const PS1_STYLES = `
      the grid exactly.
   ------------------------------------------------------------------ */
   .gt-lcd {
+    font-family: var(--font-ps1-hud);
     position: relative;
     display: inline-flex;
     align-items: baseline;
@@ -547,6 +550,7 @@ export const PS1_STYLES = `
     text-shadow: 1px 1px 0 rgba(0, 0, 0, 0.8);
   }
   .gt-chip {
+    font-family: var(--font-ps1-hud);
     display: inline-flex;
     align-items: center;
     justify-content: center;
@@ -555,8 +559,8 @@ export const PS1_STYLES = `
        nobody could read from the room. */
     min-width: 22px;
     padding: 0 8px;
-    height: 22px;
-    font-size: 13px;
+    height: 26px;
+    font-size: 14px;
     text-transform: uppercase;
     white-space: nowrap;
     /* An unlit lamp still has to be readable — that is the whole reason the
@@ -728,5 +732,16 @@ export const PS1_STYLES = `
     box-shadow:
       inset 2px 2px 0 0 #000,
       inset -2px -2px 0 0 rgba(160, 160, 175, 0.35);
+  }
+
+  /* The reading face is never forced into caps. NeueBit is a text face with
+     a real lowercase, and shouting it defeats the reason it was brought in —
+     the HUD face keeps its caps because an instrument label is drawn, not
+     read. Matched by the inline font declaration rather than by class, so
+     the rule follows the face everywhere it is used, including places the
+     capsy label classes are borrowed for their shadow and tracking. Sits
+     last in the sheet so it wins the specificity tie against those classes. */
+  [style*='--font-ps1-body'] {
+    text-transform: none;
   }
 `

@@ -22,6 +22,28 @@ export const CAR_MODELS: ReadonlyArray<CarModel> = Array.from({ length: 8 }, (_,
   textureUrl: `/ps1/cars/car${index + 1}.png`,
 }))
 
+/**
+ * Which chassis a driver gets, from their key rather than from where they
+ * happen to be standing.
+ *
+ * The track used to pick by race position and the board by all-time rank,
+ * which are two different orders — so a driver could be a van on the circuit
+ * and a hatchback on the podium, with their own paint job on both. A car is
+ * the driver's, not the row's: hashing the key gives everyone one chassis
+ * that holds across every surface and every day. Two drivers can land on the
+ * same model; the paint shop is what tells them apart, and that was already
+ * true of two drivers sharing a rank across days.
+ */
+export function chassisFor(key: string): number {
+  // FNV-1a, 32-bit. Small, stable and good enough to spread eight buckets.
+  let hash = 0x811c9dc5
+  for (let i = 0; i < key.length; i++) {
+    hash ^= key.charCodeAt(i)
+    hash = Math.imul(hash, 0x01000193)
+  }
+  return (hash >>> 0) % CAR_MODELS.length
+}
+
 export function carModelFor(index: number): CarModel {
   return CAR_MODELS[((index % CAR_MODELS.length) + CAR_MODELS.length) % CAR_MODELS.length]
 }

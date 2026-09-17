@@ -16,9 +16,52 @@ import type { CSSProperties } from 'react'
 // It applies to the HUD layers only. The 3D canvas is deliberately left alone:
 // zooming it would shrink the renderer's internal buffer and coarsen the
 // picture, and the picture is not what is hard to read from across the room.
+//
+// The value lives in a CSS custom property rather than a JS constant so it can
+// step with the viewport: the wall display wants the chrome large, a laptop
+// wants it a touch smaller, and a phone — where the race is only half the
+// screen — wants it smaller still. See HUD_SCALE_STYLES for the steps.
 
-/** How much larger than its designed size the chrome is drawn. */
-export const HUD_SCALE = 1.35
+/** The custom property every race-chrome layer reads. */
+const HUD_SCALE_VAR = 'var(--hud-scale)'
+/**
+ * The one the stacked layout's panel reads. Identical to the HUD's on a wide
+ * screen; on a phone the two part ways, because the race chrome has to shrink
+ * to fit a band half the screen tall while the board underneath it is the
+ * thing a phone is for and wants full size.
+ */
+const UI_SCALE_VAR = 'var(--ui-scale)'
+
+/** Chrome zoom on a wall-sized display. Below this width it steps down. */
+export const HUD_SCALE_LARGE = 1.35
+/** Chrome zoom on an ordinary laptop. */
+export const HUD_SCALE_LAPTOP = 1.2
+/** Chrome zoom in the narrow layout, where the race is a band above the UI. */
+export const HUD_SCALE_NARROW = 0.85
+/** Panel zoom in the narrow layout. The type is sized for a phone already. */
+export const UI_SCALE_NARROW = 1
+
+/** Viewports at or above this width get the wall-display zoom. */
+export const LARGE_BREAKPOINT_PX = 1400
+/**
+ * Below this width the cabinet stops floating windows over the race and
+ * stacks instead — race on top, the board and menu underneath. Shared with
+ * useNarrowViewport so the JS layout switch and the CSS steps agree.
+ */
+export const NARROW_BREAKPOINT_PX = 900
+
+/**
+ * The steps, as CSS. Mounted once by the cabinet alongside its other styles.
+ */
+export const HUD_SCALE_STYLES = `
+  :root { --hud-scale: ${HUD_SCALE_LAPTOP}; --ui-scale: ${HUD_SCALE_LAPTOP}; }
+  @media (min-width: ${LARGE_BREAKPOINT_PX}px) {
+    :root { --hud-scale: ${HUD_SCALE_LARGE}; --ui-scale: ${HUD_SCALE_LARGE}; }
+  }
+  @media (max-width: ${NARROW_BREAKPOINT_PX - 1}px) {
+    :root { --hud-scale: ${HUD_SCALE_NARROW}; --ui-scale: ${UI_SCALE_NARROW}; }
+  }
+`
 
 /**
  * A layer that fills its parent. Percentages resolve against the parent before
@@ -29,7 +72,7 @@ export const HUD_SCALE = 1.35
 export const SCALED_SURFACE: CSSProperties = {
   width: '100%',
   height: '100%',
-  zoom: HUD_SCALE,
+  zoom: HUD_SCALE_VAR,
 }
 
 /**
@@ -38,7 +81,17 @@ export const SCALED_SURFACE: CSSProperties = {
  * drifting into the frame edge.
  */
 export const SCALED_CHROME: CSSProperties = {
-  zoom: HUD_SCALE,
+  zoom: HUD_SCALE_VAR,
+}
+
+/**
+ * The stacked layout's panel: fills its parent like SCALED_SURFACE, but at
+ * the panel's own scale rather than the race chrome's.
+ */
+export const SCALED_PANEL: CSSProperties = {
+  width: '100%',
+  height: '100%',
+  zoom: UI_SCALE_VAR,
 }
 
 /**
@@ -53,5 +106,5 @@ export const SCALED_CHROME: CSSProperties = {
  * measurement back down.
  */
 export function scaledViewport(axis: 'vw' | 'vh', inset: number): string {
-  return `calc((100${axis} - ${inset}px) / ${HUD_SCALE})`
+  return `calc((100${axis} - ${inset}px) / ${HUD_SCALE_VAR})`
 }

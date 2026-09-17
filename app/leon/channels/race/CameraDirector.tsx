@@ -222,7 +222,11 @@ export function CameraDirector({
           .addScaledVector(scratch.forward, LATCH_LOOK_DISTANCE)
       }
 
-      circuit.sampleInto(subject.t, circuit.laneOffset(subject.lane), scratch.target, scratch.tangent)
+      // Where the car *is*, not the lane it is aiming for. The renderer places
+      // the kart at `lateral`; sampling the lane offset here framed the ideal
+      // line instead, and in a drift or a lane change the car sat a couple of
+      // metres off centre while the camera looked at empty road.
+      circuit.sampleInto(subject.t, subject.lateral, scratch.target, scratch.tangent)
       // Camera sits on a sphere around the car: heading + PI puts it behind,
       // and the viewer's yaw/pitch swing it from there.
       const heading = Math.atan2(scratch.tangent.x, scratch.tangent.z) + Math.PI
@@ -263,7 +267,9 @@ export function CameraDirector({
       // collision correction turns a camera move into a stutter, and the
       // arrival position is itself resolved, so the flight ends somewhere legal.
       if (latch.current >= 1) {
-        resolveCameraCollision(circuit, camera.position, delta)
+        resolveCameraCollision(circuit, camera.position, delta, {
+          referenceY: scratch.lookAt.y,
+        })
       }
       camera.lookAt(scratch.lookAt)
       return
@@ -299,7 +305,7 @@ export function CameraDirector({
 
     report(shot, shot === 'high' ? null : subject)
 
-    circuit.sampleInto(subject.t, circuit.laneOffset(subject.lane), scratch.target, scratch.tangent)
+    circuit.sampleInto(subject.t, subject.lateral, scratch.target, scratch.tangent)
 
     let targetFov = BASE_FOV
 
@@ -369,13 +375,20 @@ export function CameraDirector({
       scratch.lookAt.copy(circuit.centre)
     }
 
+    const cutFrame = cutting.current
     cutting.current = false
 
     // Trackside and the high wide place the camera outright rather than
     // easing towards it, so their correction has to land in the same frame —
-    // see `instant`.
+    // and so does any shot's first frame after a cut: the eased lift climbs
+    // at a rate tuned for a kerb passing under a moving rig, and a cut that
+    // lands thirty units inside a hillside would spend a visible third of a
+    // second underground before it surfaced. The reference height is the
+    // subject's own, which is what picks the road rather than the valley
+    // floor when the two are stacked.
     resolveCameraCollision(circuit, camera.position, delta, {
-      instant: shot === 'trackside' || shot === 'high',
+      instant: cutFrame || shot === 'trackside' || shot === 'high',
+      referenceY: scratch.target.y + 1,
     })
 
     easeFov(camera, targetFov, delta)

@@ -1,4 +1,10 @@
 export interface DevEntry {
+  /**
+   * The driver's own key, as registered by the reporter. Optional because a
+   * deployed query can lag the source that declares it; callers fall back to
+   * the lowercased name, which is what the reporter keys on anyway.
+   */
+  key?: string
   name: string
   totalTokens: number
   inputTokens: number
@@ -10,6 +16,10 @@ export interface DevEntry {
   sessionCount: number
   lastSeen: string
   color: string | null
+  /** Paint-shop hex, null until the driver has opened the shop. */
+  paint: string | null
+  /** Livery pattern id from lib/livery.ts, null until chosen. */
+  livery: string | null
 }
 
 export interface LeaderboardEntry extends DevEntry {

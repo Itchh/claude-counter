@@ -163,10 +163,15 @@ function ParkedCar({ spot }: { readonly spot: ParkedSpot }): React.ReactElement 
   // to be a retry loop rather than a mount effect because the track model
   // loads on its own schedule, and a ray cast before the tarmac exists
   // reports the car should stand at the bottom of the world.
-  useFrame(({ scene }) => {
+  useFrame(({ scene, camera }) => {
     const group = groupRef.current
     if (!group || grounded.current) return
 
+    // Sprite.raycast dereferences raycaster.camera, and this scene contains
+    // sprites (smoke, shadows, fx). A bare raycaster leaves it null, which
+    // throws — and an exception inside useFrame kills fiber's shared frame
+    // loop for every canvas in the app, not just this one.
+    raycaster.camera = camera
     raycaster.ray.origin.set(placement.position.x, placement.position.y + 120, placement.position.z)
     const hits = raycaster.intersectObjects(scene.children, true)
     for (const hit of hits) {

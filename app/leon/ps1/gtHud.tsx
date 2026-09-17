@@ -76,7 +76,7 @@ export function HudValue({
   return (
     <span
       style={{
-        fontFamily: FONTS.hud,
+        fontFamily: FONTS.body,
         fontSize: `${size}px`,
         color: highlight ?? (dim ? GT.valueDim : GT.value),
         fontVariantNumeric: 'tabular-nums',
@@ -305,7 +305,7 @@ export function Tachometer({
               textAnchor="middle"
               fill={tick.hot ? GT.redline : GT.dialTick}
               fontFamily={FONTS.hud}
-              fontSize={11}
+              fontSize={12}
             >
               {tick.index}
             </text>
@@ -321,7 +321,7 @@ export function Tachometer({
       </svg>
       <span
         className="gt-label"
-        style={{ fontFamily: FONTS.hud, fontSize: '10px', color: GT.valueDim }}
+        style={{ fontFamily: FONTS.hud, fontSize: '12px', color: GT.valueDim }}
       >
         {caption}
       </span>

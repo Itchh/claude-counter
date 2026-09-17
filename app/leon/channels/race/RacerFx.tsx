@@ -53,6 +53,13 @@ const BUMP_SPARKS = 16
 const WALL_SPARKS = 12
 /** Smoke released in one go when a car scrubs the barrier. */
 const WALL_PUFF = 10
+/** Everything thrown off a car at the moment it goes over. */
+const CRASH_PUFF = 34
+const CRASH_SPARKS = 30
+/** Dust ground off a tumbling car, particles per second while it rolls. */
+const CRASH_SMOKE_RATE = 26
+/** How much bigger a wreck's flash opens than an ordinary shunt's. */
+const CRASH_FLASH_SCALE = 1.8
 /** How fast a spark leaves the point of contact, in units per second. */
 const SPARK_SPEED = 9
 /** Spark lifetime, seconds. Shorter than the exhaust's — these are chips. */
@@ -363,6 +370,7 @@ export function RacerFx({ racersRef, enabled }: RacerFxProps): React.ReactElemen
   const smokeDebt = useRef<number[]>([])
   const lastBumps = useRef<number[]>([])
   const lastWalls = useRef<number[]>([])
+  const lastCrashes = useRef<number[]>([])
 
   const position = useMemo(() => new THREE.Vector3(), [])
   const tangent = useMemo(() => new THREE.Vector3(), [])
@@ -452,8 +460,20 @@ export function RacerFx({ racersRef, enabled }: RacerFxProps): React.ReactElemen
         const hitWall = walls > seenWalls
         lastWalls.current[index] = walls
 
+        const crashes = racer.crashCount
+        const seenCrashes = lastCrashes.current[index] ?? crashes
+        const wrecked = crashes > seenCrashes
+        lastCrashes.current[index] = crashes
+
         if (hitCar) due += BUMP_PUFF
         if (hitWall) due += WALL_PUFF
+        if (wrecked) due += CRASH_PUFF
+        // A tumbling car grinds dust off the road the whole way through the
+        // roll — the plume that follows it is most of what says "crash"
+        // from the wide shot, where the roll itself is a few pixels.
+        if (racer.crashTimer > 0) {
+          smokeDebt.current[index] = (smokeDebt.current[index] ?? 0) + CRASH_SMOKE_RATE * dt
+        }
 
         while (smokeDebt.current[index] >= 1) {
           smokeDebt.current[index] -= 1
@@ -481,14 +501,20 @@ export function RacerFx({ racersRef, enabled }: RacerFxProps): React.ReactElemen
         // Drawn at the point of contact, which the simulation recorded for
         // exactly this: a side-swipe happens at the corner of the car, and a
         // flash at the car's centre reads as the engine going up.
-        if (hitCar || hitWall) {
-          circuit.sampleInto(racer.impactT, racer.impactLateral, contact, contactTangent)
+        if (hitCar || hitWall || wrecked) {
+          // A wreck bursts from the car itself — the crash IS the car — while
+          // an ordinary shunt flashes at the recorded point of contact.
+          if (wrecked) {
+            contact.copy(position)
+          } else {
+            circuit.sampleInto(racer.impactT, racer.impactLateral, contact, contactTangent)
+          }
           // One flash per contact, not one per car. Both cars in a shunt
           // record the *same* point, so drawing it twice puts two additive
           // sprites in the same place and doubles the brightness of exactly
           // the hits that already look biggest. Whoever gets there first this
           // frame draws it; the other one still sparks.
-          const already = drawnThisFrame.includes(racer.impactT)
+          const already = !wrecked && drawnThisFrame.includes(racer.impactT)
           if (!already) {
             drawnThisFrame.push(racer.impactT)
             const flash = emit(
@@ -499,15 +525,15 @@ export function RacerFx({ racersRef, enabled }: RacerFxProps): React.ReactElemen
               0,
               0,
               0,
-              IMPACT_LIFE,
+              wrecked ? IMPACT_LIFE * 1.5 : IMPACT_LIFE,
             )
-            impact.sizes[flash] = IMPACT_SIZE_START
+            impact.sizes[flash] = IMPACT_SIZE_START * (wrecked ? CRASH_FLASH_SCALE : 1)
           }
 
           // Sparks. Thrown into the flame pool rather than a fourth of their
           // own: they are chips of hot metal cooling on the way down, which
           // is the flame's whole behaviour already.
-          const count = hitCar ? BUMP_SPARKS : WALL_SPARKS
+          const count = wrecked ? CRASH_SPARKS : hitCar ? BUMP_SPARKS : WALL_SPARKS
           for (let n = 0; n < count; n++) {
             const angle = Math.random() * Math.PI * 2
             const speed = SPARK_SPEED * (0.4 + Math.random() * 0.9)
@@ -599,7 +625,12 @@ function advanceImpacts(pool: Pool, dt: number): void {
     pool.life[i] -= dt
 
     const age = 1 - Math.max(0, pool.life[i]) / pool.maxLife[i]
-    pool.sizes[i] = IMPACT_SIZE_START + (IMPACT_SIZE_END - IMPACT_SIZE_START) * age
+    // A flash's dealt lifetime doubles as its size class: a wreck's flash is
+    // dealt half as long again as a shunt's (see CRASH_FLASH_SCALE at the
+    // emitter) and grows proportionally bigger here, without the pool having
+    // to carry a second per-particle attribute.
+    const scale = pool.maxLife[i] / IMPACT_LIFE
+    pool.sizes[i] = (IMPACT_SIZE_START + (IMPACT_SIZE_END - IMPACT_SIZE_START) * age) * scale
     // White at the core of the moment, cooling through the same yellow the
     // exhaust flame uses so the two effects read as one material.
     pool.colors[i * 4] = 1

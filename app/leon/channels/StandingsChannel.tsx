@@ -21,6 +21,7 @@ import { ARCADE, PS1, FONTS, toPowerStats, type PowerStats } from '../ps1/theme'
 import { SCALED_SURFACE } from '../ps1/hudScale'
 import { ROW_PREFIX, useNavItem } from '../ps1/navigation'
 import { Ps1Car } from '../ps1/Ps1Car'
+import { chassisFor } from './race/cars'
 import { RaceStrip } from '../ps1/RaceStrip'
 import type { ChannelProps } from './ChannelRegistry'
 
@@ -560,6 +561,10 @@ function StandingRow({
   readonly loaded: boolean
 }): React.ReactElement {
   const key = entry.name.toLowerCase()
+  // The chassis belongs to the driver, not to the row they are standing in,
+  // so it hashes their key — with the same fallback the podium uses, or the
+  // two surfaces would hash different strings and hand out different cars.
+  const chassisKey = entry.key ?? key
   const i = index
   // The prefix is what the number keys count — see ROW_PREFIX.
   const nav = useNavItem(`${ROW_PREFIX}${key}`)
@@ -625,12 +630,15 @@ function StandingRow({
                     {/* Their car, not their face. This is a racing channel:
                         the row's job is to say who is winning and what they
                         are driving, and five near-identical busts said
-                        neither. The variant follows their place, which is
-                        how the race hands cars out too — see carModelFor. */}
+                        neither. The chassis is the driver's own, not the
+                        row's, so it survives a change of rank and matches
+                        the track and the podium — see chassisFor. */}
                     <Ps1Car
                       color={gauge}
                       size={48}
-                      variant={index}
+                      variant={chassisFor(chassisKey)}
+                      paint={entry.paint}
+                      livery={entry.livery}
                       label={entry.name}
                       intensity={Math.min(1, burnRate / INTENSITY_CEILING_TOKENS_PER_MIN)}
                     />

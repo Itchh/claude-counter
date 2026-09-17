@@ -7,6 +7,7 @@ import {
 } from '../channels/race/cars'
 import { splitCarGeometry } from '../channels/race/carGeometry'
 import { createPs1Material, configurePs1Texture } from '../channels/race/Ps1Material'
+import { liveryShaderId, PAINT_STRENGTH } from '@/lib/livery'
 
 // The scoreboard's cars, baked from the race's own models.
 //
@@ -123,13 +124,22 @@ function loadTexture(url: string): Promise<THREE.Texture> {
 
 /**
  * Renders one driver's car as a vertical sprite sheet of `SPRITE_FRAMES`
- * frames, and hands back a data URL. Cached per car and livery, so eight
+ * frames, and hands back a data URL. Cached per car and paint job, so eight
  * drivers sharing a model and a paint job bake once between them.
+ *
+ * `paint` and `livery` are the driver's paint-shop choices, applied through
+ * the same shader path the track cars use — the whole point of the sprite is
+ * that it shows the car that is actually out there, customisations included.
  */
-export function bakeCarSprite(index: number, driverHex: string): Promise<string> {
+export function bakeCarSprite(
+  index: number,
+  driverHex: string,
+  paint: string | null = null,
+  livery: string | null = null,
+): Promise<string> {
   const model = carModelFor(index)
-  const livery = liveryFor(index, driverHex)
-  const key = `${model.objUrl}|${livery}`
+  const page = liveryFor(index, paint ?? driverHex)
+  const key = `${model.objUrl}|${page}|${paint ?? ''}|${livery ?? ''}`
   const cached = sheetCache.get(key)
   if (cached) return cached
 
@@ -137,7 +147,7 @@ export function bakeCarSprite(index: number, driverHex: string): Promise<string>
     const [bodySource, wheelGeometry, liveryTexture, wheelTexture] = await Promise.all([
       loadFirstMesh(model.objUrl),
       loadFirstMesh(WHEEL_MODEL.objUrl),
-      loadTexture(livery),
+      loadTexture(page),
       loadTexture(WHEEL_MODEL.textureUrl),
     ])
 
@@ -161,6 +171,13 @@ export function bakeCarSprite(index: number, driverHex: string): Promise<string>
       const split = splitCarGeometry(bodySource)
       body = split.body
 
+      // The body's own box, measured the same way Kart.tsx measures it, so a
+      // pattern lands identically on the thumbnail and the track car.
+      split.body.computeBoundingBox()
+      const bodyBounds =
+        split.body.boundingBox ??
+        new THREE.Box3(new THREE.Vector3(), new THREE.Vector3(1, 1, 1))
+
       const scene = new THREE.Scene()
       // Fog pushed past the far plane: the circuit's shared stops would
       // dissolve a thumbnail sitting four units from the lens into flat sky.
@@ -168,6 +185,12 @@ export function bakeCarSprite(index: number, driverHex: string): Promise<string>
         color: '#ffffff',
         map: configurePs1Texture(liveryTexture),
         tint: 0,
+        livery: {
+          pattern: liveryShaderId(livery),
+          paint: paint ?? driverHex,
+          bounds: bodyBounds,
+          paintStrength: paint === null ? 0 : PAINT_STRENGTH,
+        },
         ambient: 0.72,
         fogNear: 900,
         fogFar: 1000,

@@ -15,8 +15,11 @@
  * family string.
  */
 export const FONTS = {
+  /** The small face: captions, meta, LCDs, instrument labels. */
   hud: 'var(--font-ps1-hud)',
   codec: 'var(--font-ps1-codec)',
+  /** The reading face: names, values, titles, buttons, sentences. */
+  body: 'var(--font-ps1-body)',
 } as const
 
 export const PS1 = {
@@ -152,18 +155,45 @@ export const PS1_SKY = {
  * display rendered exactly the same 13px as a laptop — the bigger the screen,
  * the smaller the type read. Fixed sizes with real steps between them give
  * the HUD an actual hierarchy, and the room reads it from across the office.
+ *
+ * These are pre-zoom pixels: the HUD layer is scaled by --hud-scale on top
+ * (see hudScale.ts), so `micro` at 14 lands at 17px on a laptop and 19px on
+ * the wall. Nothing on the HUD is set below `micro`.
  */
 export const PS1_TYPE = {
   /** Lap count. The one number visible from the far end of the room. */
-  display: 44,
+  display: 48,
   /** Channel and stage idents. */
-  title: 22,
+  title: 24,
   /** Driver names in the tower, POV ident. */
-  body: 18,
+  body: 22,
   /** Scores, positions, secondary readouts. */
-  label: 14,
+  label: 18,
   /** Units, footnotes, anything that only matters up close. */
-  micro: 12,
+  micro: 14,
+} as const
+
+/**
+ * Type scale for the cabinet's windows — the leaderboard, the menu, the paint
+ * shop — in the same pre-zoom pixels as PS1_TYPE.
+ *
+ * A window is read by somebody standing at the screen rather than across the
+ * room, so its steps are closer together than the HUD's, but its floor is the
+ * same: `caption` is the smallest thing a window is allowed to print. The
+ * previous board set its captions at 11px and its prose at 13px inside a
+ * layer that was never zoomed, which is how the menu ended up unreadable.
+ */
+export const UI_TYPE = {
+  /** A window's title. */
+  title: 28,
+  /** Section headings and the biggest number on a plinth. */
+  heading: 20,
+  /** Names, values, key labels, buttons. */
+  body: 17,
+  /** Sentences. Set a step under body so a paragraph reads as one. */
+  prose: 15,
+  /** Captions, units, status words. The floor. */
+  caption: 14,
 } as const
 
 /** 15-bit colour: 5 bits per channel, exactly as the console's framebuffer. */

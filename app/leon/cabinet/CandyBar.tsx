@@ -99,7 +99,7 @@ export function CandyBar({
                 <span
                   style={{
                     fontFamily: FONTS.hud,
-                    fontSize: '10px',
+                    fontSize: '12px',
                     color: '#000',
                     letterSpacing: '0.08em',
                     whiteSpace: 'nowrap',

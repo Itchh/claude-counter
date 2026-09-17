@@ -41,6 +41,10 @@ export const get = query({
     const sorted = users
       .sort((a, b) => b.totalTokens - a.totalTokens)
       .map((user, i) => ({
+        // The driver's own key, not a derivation of their name. The paint
+        // shop writes against it, and a name lowercased is not the same
+        // string as the key the reporter registered under.
+        key: user.key,
         name: user.name,
         totalTokens: user.totalTokens,
         inputTokens: user.inputTokens,
@@ -55,6 +59,11 @@ export const get = query({
         // reporting window (75 min) rather than seconds.
         isOnline: Date.now() - new Date(user.lastSeen).getTime() < 75 * 60_000,
         color: user.color ?? null,
+        // The paint shop's choices ride along so every surface that draws a
+        // driver's car — the standings rows, the podium — shows the car they
+        // actually customised, not just the one the race is running.
+        paint: user.paint ?? null,
+        livery: user.livery ?? null,
       }))
 
     const totalTokens = sorted.reduce((s, e) => s + e.totalTokens, 0)

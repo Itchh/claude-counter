@@ -1,6 +1,6 @@
 'use client'
 
-import { ARCADE, FONTS } from '../ps1/theme'
+import { ARCADE, FONTS, UI_TYPE } from '../ps1/theme'
 
 // The cabinet's whole chrome: two words in the top-right corner, sitting on
 // the picture rather than in a bar above it.
@@ -8,6 +8,10 @@ import { ARCADE, FONTS } from '../ps1/theme'
 // Neither is an icon. A pictograph has to be learned, and the HUD face is a
 // bitmap recreation with no symbol coverage to draw one in anyway — so the
 // button says what it opens, and the lit state says whether it is open.
+//
+// In the stacked layout the same two words become a tab row across the top of
+// the panel under the race. There is always one lit, because there is always
+// a panel showing, so the lit one never turns into "Close".
 
 export type CabinetWindowId = 'board' | 'menu'
 
@@ -16,36 +20,52 @@ const BUTTONS: ReadonlyArray<{ id: CabinetWindowId; label: string }> = [
   { id: 'menu', label: 'Menu' },
 ]
 
+const BUTTON_HEIGHT_PX = 48
+
 interface TopBarProps {
   readonly open: CabinetWindowId | null
   readonly onOpen: (next: CabinetWindowId | null) => void
+  /** `corner`: floating over the race. `tabs`: a full-width row of tabs. */
+  readonly layout: 'corner' | 'tabs'
 }
 
-export function TopBar({ open, onOpen }: TopBarProps): React.ReactElement {
+export function TopBar({ open, onOpen, layout }: TopBarProps): React.ReactElement {
+  const isTabs = layout === 'tabs'
   return (
-    <div style={{ display: 'flex', gap: '8px', pointerEvents: 'auto' }}>
+    <div
+      role={isTabs ? 'tablist' : undefined}
+      style={{
+        display: 'flex',
+        gap: isTabs ? '2px' : '8px',
+        pointerEvents: 'auto',
+        ...(isTabs ? { background: ARCADE.rule, borderBottom: `2px solid ${ARCADE.rule}` } : {}),
+      }}
+    >
       {BUTTONS.map((button) => {
         const isOpen = open === button.id
         return (
           <button
             key={button.id}
             type="button"
-            aria-expanded={isOpen}
-            onClick={() => onOpen(isOpen ? null : button.id)}
+            role={isTabs ? 'tab' : undefined}
+            aria-selected={isTabs ? isOpen : undefined}
+            aria-expanded={isTabs ? undefined : isOpen}
+            onClick={() => onOpen(isOpen && !isTabs ? null : button.id)}
             className="gt-label"
             style={{
-              height: '44px',
+              height: `${BUTTON_HEIGHT_PX}px`,
               padding: '0 20px',
               border: 'none',
-              background: isOpen ? ARCADE.amber : 'rgba(5, 5, 5, 0.82)',
+              flex: isTabs ? 1 : undefined,
+              background: isOpen ? ARCADE.amber : isTabs ? ARCADE.ground : 'rgba(5, 5, 5, 0.82)',
               color: isOpen ? '#000' : ARCADE.silver,
-              boxShadow: isOpen ? 'none' : `inset 0 0 0 2px ${ARCADE.rule}`,
-              fontFamily: FONTS.hud,
-              fontSize: '17px',
+              boxShadow: isOpen || isTabs ? 'none' : `inset 0 0 0 2px ${ARCADE.rule}`,
+              fontFamily: FONTS.body,
+              fontSize: `${UI_TYPE.body + 1}px`,
               letterSpacing: '0.12em',
             }}
           >
-            {isOpen ? 'Close' : button.label}
+            {isOpen && !isTabs ? 'Close' : button.label}
           </button>
         )
       })}

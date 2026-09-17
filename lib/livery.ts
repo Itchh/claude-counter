@@ -54,6 +54,17 @@ export const LIVERIES: ReadonlyArray<LiveryOption> = [
 
 export const DEFAULT_LIVERY_ID = 'plain'
 
+/**
+ * How far a chosen paint respray takes the pack's own page, 0..1.
+ *
+ * Short of 1 on purpose. The respray keeps the page's luminance and replaces
+ * its hue (see uPaintMix in Ps1Material), so at 1 the glass and the lamps go
+ * the colour of the bodywork too. Shared here because two renderers must
+ * agree on it exactly — the track car and the scoreboard's baked sprite are
+ * pictures of the same paint job.
+ */
+export const PAINT_STRENGTH = 0.82
+
 export function isPaintHex(hex: string): boolean {
   return PAINTS.some((paint) => paint.hex === hex)
 }

@@ -8,7 +8,8 @@ import * as THREE from 'three'
 import { api } from '@/convex/_generated/api'
 import { LIVERIES, PAINTS, DEFAULT_LIVERY_ID } from '@/lib/livery'
 import { fmtTokensShort } from '@/lib/formatters'
-import { ARCADE, PS1, PS1_TYPE } from '../../ps1/theme'
+import { ARCADE, FONTS, PS1, PS1_TYPE, UI_TYPE } from '../../ps1/theme'
+import { SCALED_CHROME, scaledViewport } from '../../ps1/hudScale'
 import { Kart, type MotionBox } from './Kart'
 
 // The paint shop. Opened by clicking a driver on the tower, and it holds the
@@ -37,6 +38,10 @@ const DRAG_SENSITIVITY = 0.012
 const OUTLINE = '-1px -1px 0 #000, 1px -1px 0 #000, -1px 1px 0 #000, 1px 1px 0 #000'
 const INK = { textShadow: `${OUTLINE}, 2px 2px 0 rgba(0,0,0,0.92)` } as const
 const RED_BEVEL = { textShadow: `1px 1px 0 ${ARCADE.labelShadow}, ${OUTLINE}` } as const
+/** Buttons do not inherit the cabinet's face — the UA sheet resets them. */
+const BUTTON_FONT = { font: 'inherit' } as const
+/** Height of the turntable. Short enough that the whole shop fits a laptop. */
+const TURNTABLE_HEIGHT_PX = 220
 
 export interface PaintShopDriver {
   readonly key: string
@@ -148,12 +153,19 @@ export function PaintShop({
       role="dialog"
       aria-label={`Paint shop — ${driver.name}`}
       style={{
-        position: 'absolute',
+        // Fixed to the viewport, not to the race: in the stacked layout the
+        // race is a band with its overflow clipped, and a dialog inside it
+        // lost its head and its buttons. Over a full-screen race the two are
+        // the same box.
+        position: 'fixed',
         inset: 0,
         zIndex: 20,
         display: 'flex',
         alignItems: 'center',
         justifyContent: 'center',
+        // The same zoom as the HUD it opens from, so the shop reads at the
+        // size of the tower row that was clicked. Sizes below are pre-zoom.
+        ...SCALED_CHROME,
       }}
     >
       <div
@@ -168,8 +180,12 @@ export function PaintShop({
         transition={{ duration: 0.22, ease: [0.2, 0.8, 0.2, 1] }}
         style={{
           position: 'relative',
-          width: '560px',
-          maxWidth: '92%',
+          width: '600px',
+          maxWidth: '94%',
+          // The frame fits the screen; the option list scrolls if it must.
+          maxHeight: scaledViewport('vh', 32),
+          display: 'flex',
+          flexDirection: 'column',
           background: ARCADE.ground,
           border: `2px solid ${ARCADE.rule}`,
           boxShadow: '0 0 0 1px #000, 0 18px 0 rgba(0,0,0,0.5)',
@@ -185,20 +201,20 @@ export function PaintShop({
           }}
         >
           <span style={{ display: 'flex', alignItems: 'baseline', gap: '12px' }}>
-            <span className="gt-label" style={{ fontSize: '13px', color: ARCADE.label, ...RED_BEVEL }}>
+            <span className="gt-label" style={{ fontFamily: FONTS.hud, fontSize: `${UI_TYPE.caption}px`, color: ARCADE.label, ...RED_BEVEL }}>
               Paint shop
             </span>
-            <span className="gt-label" style={{ fontSize: '19px', color: paint, ...INK }}>
+            <span className="gt-label" style={{ fontSize: `${UI_TYPE.heading}px`, color: paint, ...INK }}>
               {driver.name}
             </span>
-            <span className="gt-label" style={{ fontSize: `${PS1_TYPE.micro}px`, color: ARCADE.grey }}>
+            <span className="gt-label" style={{ fontFamily: FONTS.hud, fontSize: `${PS1_TYPE.micro}px`, color: ARCADE.grey }}>
               {fmtTokensShort(driver.score)} tokens
             </span>
           </span>
           <span style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
             <span
               className="gt-label"
-              style={{ fontSize: '11px', color: ARCADE.amber, animation: 'blink 1.4s step-end infinite' }}
+              style={{ fontFamily: FONTS.hud, fontSize: `${UI_TYPE.caption}px`, color: ARCADE.amber, animation: 'blink 1.4s step-end infinite' }}
             >
               Race held
             </span>
@@ -207,11 +223,12 @@ export function PaintShop({
               onClick={onClose}
               className="gt-label"
               style={{
+                ...BUTTON_FONT,
                 background: 'none',
                 border: `1px solid ${ARCADE.rule}`,
                 color: ARCADE.silver,
-                fontSize: '11px',
-                padding: '2px 8px',
+                fontSize: `${UI_TYPE.caption}px`,
+                padding: '4px 10px',
               }}
             >
               Esc
@@ -223,7 +240,8 @@ export function PaintShop({
         <div
           style={{
             position: 'relative',
-            height: '250px',
+            flex: '0 0 auto',
+            height: `${TURNTABLE_HEIGHT_PX}px`,
             background: ARCADE.groundDeep,
             borderBottom: `2px solid ${ARCADE.rule}`,
             touchAction: 'none',
@@ -273,7 +291,8 @@ export function PaintShop({
               position: 'absolute',
               right: '12px',
               bottom: '8px',
-              fontSize: '10px',
+              fontFamily: FONTS.hud,
+              fontSize: `${UI_TYPE.caption}px`,
               color: ARCADE.grey,
               pointerEvents: 'none',
             }}
@@ -282,9 +301,9 @@ export function PaintShop({
           </span>
         </div>
 
-        <div style={{ padding: '12px 14px 14px', display: 'flex', flexDirection: 'column', gap: '12px' }}>
+        <div style={{ padding: '12px 14px 14px', display: 'flex', flexDirection: 'column', gap: '12px', overflowY: 'auto', minHeight: 0 }}>
           <div>
-            <span className="gt-label" style={{ fontSize: '12px', color: ARCADE.label, ...RED_BEVEL }}>
+            <span className="gt-label" style={{ fontFamily: FONTS.hud, fontSize: `${UI_TYPE.caption}px`, color: ARCADE.label, ...RED_BEVEL }}>
               Paint
             </span>
             <div style={{ display: 'flex', gap: '6px', marginTop: '7px' }}>
@@ -300,7 +319,7 @@ export function PaintShop({
                     onClick={() => setPaint(option.hex)}
                     style={{
                       flex: 1,
-                      height: '30px',
+                      height: '34px',
                       background: option.hex,
                       border: chosen ? '2px solid #fff' : `1px solid ${ARCADE.rule}`,
                       boxShadow: chosen
@@ -315,7 +334,7 @@ export function PaintShop({
           </div>
 
           <div>
-            <span className="gt-label" style={{ fontSize: '12px', color: ARCADE.label, ...RED_BEVEL }}>
+            <span className="gt-label" style={{ fontFamily: FONTS.hud, fontSize: `${UI_TYPE.caption}px`, color: ARCADE.label, ...RED_BEVEL }}>
               Livery
             </span>
             <div
@@ -335,6 +354,7 @@ export function PaintShop({
                     aria-pressed={chosen}
                     onClick={() => setPattern(option.id)}
                     style={{
+                      ...BUTTON_FONT,
                       background: chosen ? '#160606' : ARCADE.groundDeep,
                       border: chosen ? `2px solid ${ARCADE.label}` : `1px solid ${ARCADE.rule}`,
                       padding: '6px 8px',
@@ -346,11 +366,14 @@ export function PaintShop({
                   >
                     <span
                       className="gt-label"
-                      style={{ fontSize: '12px', color: chosen ? ARCADE.value : ARCADE.silver }}
+                      style={{ fontSize: `${UI_TYPE.prose}px`, color: chosen ? ARCADE.value : ARCADE.silver }}
                     >
                       {option.name}
                     </span>
-                    <span className="gt-label" style={{ fontSize: '9px', color: ARCADE.grey }}>
+                    <span
+                      className="gt-label"
+                      style={{ fontFamily: FONTS.hud, fontSize: `${UI_TYPE.caption}px`, color: ARCADE.grey, whiteSpace: 'normal', lineHeight: 1.4 }}
+                    >
                       {option.note}
                     </span>
                   </button>
@@ -368,7 +391,7 @@ export function PaintShop({
               role="alert"
               className="gt-label"
               style={{
-                fontSize: '11px',
+                fontSize: `${UI_TYPE.prose}px`,
                 color: PS1.hot,
                 whiteSpace: 'normal',
                 lineHeight: 1.5,
@@ -386,11 +409,12 @@ export function PaintShop({
               onClick={onClose}
               className="gt-label"
               style={{
+                ...BUTTON_FONT,
                 background: ARCADE.groundDeep,
                 border: `1px solid ${ARCADE.rule}`,
                 color: ARCADE.grey,
-                fontSize: '11px',
-                padding: '8px 16px',
+                fontSize: `${UI_TYPE.prose}px`,
+                padding: '10px 18px',
               }}
             >
               Cancel
@@ -401,11 +425,12 @@ export function PaintShop({
               disabled={saving}
               className="gt-label"
               style={{
+                ...BUTTON_FONT,
                 background: ARCADE.label,
                 border: '1px solid #000',
                 color: '#fff',
-                fontSize: '11px',
-                padding: '8px 20px',
+                fontSize: `${UI_TYPE.prose}px`,
+                padding: '10px 22px',
                 opacity: saving ? 0.6 : 1,
                 ...RED_BEVEL,
               }}
