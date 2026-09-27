@@ -1,6 +1,5 @@
 'use client'
 
-import { motion } from 'motion/react'
 import { ARCADE, FONTS, UI_TYPE } from '../ps1/theme'
 import { scaledViewport } from '../ps1/hudScale'
 
@@ -17,6 +16,13 @@ import { scaledViewport } from '../ps1/hudScale'
 // floating frame, no close button — the tab row above it is the way between
 // windows — just the header and a scrolling body filling whatever is under
 // the race.
+//
+// The fade-in is a CSS animation, deliberately. It was a Motion transition,
+// and Motion animates on a requestAnimationFrame loop that three WebGL
+// scenes are already leaning on; when that loop stalled the window froze a
+// few frames into its fade and sat translucent over the game with the HUD
+// showing through. The compositor cannot stall. There is no fade-out: a
+// window that closes should be gone when you press Esc.
 
 const WINDOW_WIDTH_PX = 880
 
@@ -75,16 +81,13 @@ function WindowHeader({
             <button
               type="button"
               onClick={onClose}
-              className="gt-label"
+              className="gt-label arc-button arc-button-on"
               style={{
                 height: '44px',
                 padding: '0 18px',
                 border: 'none',
                 background: ARCADE.amber,
-                color: '#000',
-                fontFamily: FONTS.body,
                 fontSize: `${UI_TYPE.body}px`,
-                letterSpacing: '0.14em',
               }}
             >
               Close — Esc
@@ -112,11 +115,8 @@ export function Window(props: WindowProps): React.ReactElement {
   }
 
   return (
-    <motion.div
-      initial={{ opacity: 0 }}
-      animate={{ opacity: 1 }}
-      exit={{ opacity: 0 }}
-      transition={{ duration: 0.14 }}
+    <div
+      className="cab-window-veil"
       style={{
         position: 'absolute',
         inset: 0,
@@ -131,13 +131,10 @@ export function Window(props: WindowProps): React.ReactElement {
         style={{ position: 'absolute', inset: 0, background: 'rgba(4, 4, 8, 0.62)' }}
       />
 
-      <motion.div
+      <div
         role="dialog"
         aria-label={title}
-        initial={{ opacity: 0, y: 10 }}
-        animate={{ opacity: 1, y: 0 }}
-        exit={{ opacity: 0, y: 6 }}
-        transition={{ duration: 0.16, ease: 'easeOut' }}
+        className="cab-window-panel"
         style={{
           position: 'relative',
           // The frame, not the contents, is what has to fit the screen — and
@@ -154,7 +151,7 @@ export function Window(props: WindowProps): React.ReactElement {
       >
         <WindowHeader {...props} />
         <div style={{ flex: 1, minHeight: 0, overflowY: 'auto' }}>{children}</div>
-      </motion.div>
-    </motion.div>
+      </div>
+    </div>
   )
 }

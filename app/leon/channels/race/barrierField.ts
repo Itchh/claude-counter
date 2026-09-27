@@ -1,5 +1,5 @@
 import * as THREE from 'three'
-import { buildTriangleGrid } from './triangleGrid'
+import { buildTriangleGrid, createGridRay, type GridRay } from './triangleGrid'
 
 // Where the walls are.
 //
@@ -53,6 +53,14 @@ export interface BarrierField {
     dirZ: number,
     maxDistance: number,
   ): number
+  /**
+   * Distance to the first wall along a ray pointing anywhere, or `Infinity`.
+   *
+   * `distanceTo` is the road's question — a flat ray, in the plane the cars
+   * live in. This is the camera's: a tunnel portal is a wall, and whether one
+   * stands between the lens and the car is a question about a line in space.
+   */
+  readonly firstHit: GridRay
   /** Triangles indexed. Zero means the model had no walls to find. */
   readonly size: number
 }
@@ -60,6 +68,7 @@ export interface BarrierField {
 const EMPTY_FIELD: BarrierField = {
   size: 0,
   distanceTo: () => Infinity,
+  firstHit: () => Infinity,
 }
 
 export function buildBarrierField(root: THREE.Object3D): BarrierField {
@@ -95,8 +104,11 @@ export function buildBarrierField(root: THREE.Object3D): BarrierField {
     oversizedBounds[slot + 5] = Math.max(data[base + 2], data[base + 5], data[base + 8])
   }
 
+  const firstHit = createGridRay(grid)
+
   return {
     size: grid.count,
+    firstHit,
 
     distanceTo(x, y, z, dirX, dirZ, maxDistance) {
       generation += 1

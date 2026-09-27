@@ -130,6 +130,75 @@ export const ARCADE = {
   chromeFoot: '#c8c8c8',
 } as const
 
+/**
+ * The garage — the car select screen's own register, lifted from the
+ * late-90s touring car games rather than from the attract-mode board.
+ *
+ * Those screens were a brushed-steel frame around a picture of a workshop,
+ * with the words in two colours only: lemon for anything the player reads
+ * and cobalt for anything the player presses. The steel is three flat steps,
+ * because a real brushed ramp is a gradient and the kit refuses those — three
+ * hard bands read as metal at 240 lines exactly as well as sixty would.
+ */
+export const GARAGE = {
+  /** The frame, top to bottom. Highlight, face, shadow. */
+  steelHigh: '#d8d8dc',
+  steelFace: '#8e8e96',
+  steelLow: '#45454c',
+  /** The picture's own edge: near-black, so the frame reads as a bezel. */
+  bezel: '#141418',
+  /** Every word the driver reads. */
+  lemon: '#f2e83a',
+  lemonShadow: '#7a6a00',
+  /** Every control the driver presses. */
+  cobalt: '#2440e0',
+  cobaltHigh: '#6a80ff',
+  cobaltLow: '#101c70',
+  /** The prompt bar's text, on lemon. */
+  ink: '#c01818',
+  /** The workshop: brick, mortar, the roller door's slats, the floor. */
+  brick: '#7a3a2c',
+  brickDark: '#5a2a20',
+  mortar: '#b8a898',
+  slat: '#2a2a30',
+  slatEdge: '#4a4a52',
+  floor: '#6a6a70',
+  kerb: '#d8d8d8',
+} as const
+
+/**
+ * The ranking board — the standings channel's register, lifted from the
+ * arcade racers' results screens rather than from the attract-mode board.
+ *
+ * Those screens were a dark chequered cloth with the table printed straight
+ * on it: gold for the title, cyan for an ordinal, white for a figure, and a
+ * driver's tag spelled out one colour per letter. Orange and green were kept
+ * for the one line under the table. Every colour is stepped, not lit — a
+ * highlight above, a shade below, black around — which is the same rule as
+ * everywhere else here, in brighter paint.
+ */
+export const RANKING = {
+  /** The cloth's two squares. Low contrast: it is a ground, not a pattern. */
+  clothLight: '#26262e',
+  clothDark: '#18181e',
+  /** The title. */
+  gold: '#ffd24a',
+  goldHigh: '#fff2a8',
+  goldLow: '#a06a00',
+  /** Ordinals. */
+  cyan: '#5ce6ff',
+  cyanLow: '#0e6a8a',
+  /** Figures. */
+  white: '#f4f4f8',
+  /** The line under the table. */
+  orange: '#ff8a1a',
+  orangeLow: '#8a3a00',
+  green: '#4cff3c',
+  greenLow: '#146a10',
+  /** A tag, one colour per letter, cycling. */
+  letters: ['#ff4d4d', '#5c7cff', '#ffd24a', '#4cff3c', '#5ce6ff', '#ff5cd6'],
+} as const
+
 /** The chrome ramp as a CSS image, for clipping to glyphs or filling a chip. */
 export const ARCADE_CHROME_RAMP = `linear-gradient(${ARCADE.chromeHigh} 0%, ${ARCADE.chromeHigh} 46%, ${ARCADE.chromeLow} 46%, ${ARCADE.chromeFoot} 100%)`
 

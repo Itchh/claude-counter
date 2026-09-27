@@ -1,19 +1,19 @@
-// The library: every game the cabinet can run, in one list. The shelf draws
-// a cartridge per entry, the menu names the current one, and the G key walks
-// this array — adding a game is one entry here plus its channel.
+// The library: every game the cabinet can run, in one list. The arcade's
+// screen lists a row per entry, the menu names the current one, and the G
+// key walks this array — adding a game is one entry here plus its channel.
 
 export type CabinetGame = 'race' | 'fight' | 'dogfight'
 
-/** What the screen can be showing: a game, or the shelf they live on. */
-export type CabinetScreen = CabinetGame | 'shelf'
+/** What the screen can be showing: a game, or the room the machine stands in. */
+export type CabinetScreen = CabinetGame | 'room'
 
 export interface GameInfo {
   readonly id: CabinetGame
   readonly name: string
   readonly blurb: string
-  /** Cartridge shell colour on the shelf. */
+  /** The game's shell colour, for anything drawn as a cartridge. */
   readonly shell: string
-  /** Label sticker's band colour — the game's own key colour. */
+  /** The game's own key colour. */
   readonly accent: string
 }
 
@@ -46,7 +46,7 @@ export function isCabinetGame(value: string | null): value is CabinetGame {
 }
 
 export function isCabinetScreen(value: string | null): value is CabinetScreen {
-  return value === 'shelf' || isCabinetGame(value)
+  return value === 'room' || isCabinetGame(value)
 }
 
 export function gameInfo(id: CabinetGame): GameInfo {
@@ -55,7 +55,7 @@ export function gameInfo(id: CabinetGame): GameInfo {
   return found
 }
 
-/** The next game along the shelf, for the G key's quick flick. */
+/** The next game along the list, for the G key's quick flick. */
 export function nextGame(current: CabinetScreen): CabinetGame {
   const index = GAMES.findIndex((game) => game.id === current)
   return GAMES[(index + 1) % GAMES.length].id

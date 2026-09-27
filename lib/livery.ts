@@ -55,6 +55,27 @@ export const LIVERIES: ReadonlyArray<LiveryOption> = [
 export const DEFAULT_LIVERY_ID = 'plain'
 
 /**
+ * How many chassis the pack ships. The third thing the select screen
+ * decides, and the third thing the mutation checks: a stored chassis is an
+ * index into cars.ts's CAR_MODELS, which is built to this same count.
+ */
+export const CHASSIS_COUNT = 8
+
+/**
+ * How many airframes the squadron flies. The hangar's counterpart to
+ * CHASSIS_COUNT: a stored airframe is an index into the dogfight's
+ * AIRFRAMES, which is built from the bake and checked against this number.
+ */
+export const AIRFRAME_COUNT = 5
+
+/**
+ * How many fighters the roster holds. The dojo's counterpart to the other
+ * two: a stored fighter is an index into the fight channel's FIGHTERS,
+ * built from scripts/bakeFighters.mjs and checked against this number.
+ */
+export const FIGHTER_COUNT = 7
+
+/**
  * How far a chosen paint respray takes the pack's own page, 0..1.
  *
  * Short of 1 on purpose. The respray keeps the page's luminance and replaces
@@ -71,6 +92,18 @@ export function isPaintHex(hex: string): boolean {
 
 export function isLiveryId(id: string): boolean {
   return LIVERIES.some((livery) => livery.id === id)
+}
+
+export function isChassisIndex(index: number): boolean {
+  return Number.isInteger(index) && index >= 0 && index < CHASSIS_COUNT
+}
+
+export function isAirframeIndex(index: number): boolean {
+  return Number.isInteger(index) && index >= 0 && index < AIRFRAME_COUNT
+}
+
+export function isFighterIndex(index: number): boolean {
+  return Number.isInteger(index) && index >= 0 && index < FIGHTER_COUNT
 }
 
 /** The shader's number for a stored id. Unknown ids fall back to plain. */

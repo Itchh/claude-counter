@@ -20,6 +20,11 @@ export interface DevEntry {
   paint: string | null
   /** Livery pattern id from lib/livery.ts, null until chosen. */
   livery: string | null
+  /**
+   * Chosen chassis index, null until chosen. Optional for the same reason
+   * `key` is: a deployed query can lag the source that declares it.
+   */
+  chassis?: number | null
 }
 
 export interface LeaderboardEntry extends DevEntry {
@@ -51,7 +56,13 @@ export interface ReportBody {
   color?: string
 }
 
-export type LeaderboardEventType = 'milestone' | 'new_leader' | 'user_joined'
+export type LeaderboardEventType =
+  | 'milestone'
+  | 'new_leader'
+  | 'user_joined'
+  | 'control_taken'
+  | 'control_released'
+  | 'hot_lap'
 
 export interface LeaderboardEvent {
   id: string

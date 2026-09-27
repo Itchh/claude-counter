@@ -6,19 +6,23 @@ import { AnimatePresence, motion } from 'motion/react'
 import { useMutation } from 'convex/react'
 import * as THREE from 'three'
 import { api } from '@/convex/_generated/api'
-import { LIVERIES, PAINTS, DEFAULT_LIVERY_ID } from '@/lib/livery'
-import { fmtTokensShort } from '@/lib/formatters'
-import { ARCADE, FONTS, PS1, PS1_TYPE, UI_TYPE } from '../../ps1/theme'
+import { CHASSIS_COUNT, DEFAULT_LIVERY_ID, LIVERIES, PAINTS } from '@/lib/livery'
+import { saveErrorMessage } from '@/lib/saveError'
+import { ARCADE, FONTS, GARAGE, UI_TYPE, toPowerStats } from '../../ps1/theme'
 import { SCALED_CHROME, scaledViewport } from '../../ps1/hudScale'
+import { Garage } from './Garage'
 import { Kart, type MotionBox } from './Kart'
 
-// The paint shop. Opened by clicking a driver on the tower, and it holds the
-// race while it is open.
+// The select screen. Opened by clicking a driver on the tower or the podium,
+// and it holds the race while it is open.
 //
-// One object and two decisions. The car turns on a turntable at the full width
-// of the window, and paint and livery sit underneath it — nothing else does,
-// because nothing else about a driver is theirs to set. Transmission and
-// engine note belong to the era's select screen, not to a leaderboard.
+// One picture and three decisions. The car stands in a workshop at the full
+// width of the window and turns on a turntable; around the picture, in the
+// register of the late-90s touring car games, sit the driver's spec in lemon,
+// the livery in lemon, a row of paint, and a cobalt d-pad. Left and right
+// change the car, up and down the livery, the number keys the paint, Enter
+// saves — and the bar under the picture says exactly that, because the
+// screen's whole manner is that it tells you what the buttons do.
 //
 // The car on the turntable is the same car that is out on the circuit: same
 // chassis from the pack, same shader, same paint and same pattern, drawn by
@@ -35,23 +39,42 @@ const TURNTABLE_SPEED = 0.55
 /** Radians of turn per pixel of drag. */
 const DRAG_SENSITIVITY = 0.012
 
-const OUTLINE = '-1px -1px 0 #000, 1px -1px 0 #000, -1px 1px 0 #000, 1px 1px 0 #000'
-const INK = { textShadow: `${OUTLINE}, 2px 2px 0 rgba(0,0,0,0.92)` } as const
-const RED_BEVEL = { textShadow: `1px 1px 0 ${ARCADE.labelShadow}, ${OUTLINE}` } as const
+/** Pre-zoom pixels — see SCALED_CHROME. */
+const WINDOW_WIDTH_PX = 760
+const PICTURE_HEIGHT_PX = 360
+const TITLE_ROW_PX = 40
+const SWATCH_PX = 22
+const DPAD_PX = 100
+const HUB_PX = 42
+const ARROW_HIT_PX = 30
+
+/** A front three-quarter view, looking slightly down at the turntable. */
+const CAMERA = {
+  fov: 32,
+  position: [0, 1.15, 5.4] as const,
+  target: new THREE.Vector3(0, 0.55, -0.2),
+} as const
+
 /** Buttons do not inherit the cabinet's face — the UA sheet resets them. */
 const BUTTON_FONT = { font: 'inherit' } as const
-/** Height of the turntable. Short enough that the whole shop fits a laptop. */
-const TURNTABLE_HEIGHT_PX = 220
 
 export interface PaintShopDriver {
   readonly key: string
   readonly name: string
-  /** Grid position, which is what picks the chassis. See carModelFor. */
+  /** The chassis they are drawn in now — see chassisOf. */
   readonly index: number
+  /** The chassis they chose, or null if they are still on the hashed one. */
+  readonly chassis: number | null
   readonly color: string
   readonly paint: string | null
   readonly livery: string | null
   readonly score: number
+  /** Tokens per minute, for the spec block's rate line. */
+  readonly velocity: number
+}
+
+function cycle(value: number, delta: number, length: number): number {
+  return (((value + delta) % length) + length) % length
 }
 
 /**
@@ -60,13 +83,15 @@ export interface PaintShopDriver {
  * and half the patterns in the book are about what happens over the roof.
  */
 function Turntable({
-  driver,
+  chassis,
+  color,
   paint,
   livery,
   yawRef,
   draggingRef,
 }: {
-  readonly driver: PaintShopDriver
+  readonly chassis: number
+  readonly color: string
   readonly paint: string
   readonly livery: string
   readonly yawRef: React.RefObject<number>
@@ -87,16 +112,74 @@ function Turntable({
   })
 
   return (
-    <group ref={groupRef} position={[0, -0.34, 0]}>
+    <group ref={groupRef}>
       <Kart
-        index={driver.index}
-        color={driver.color}
+        index={chassis}
+        color={color}
         paint={paint}
         livery={livery}
         speedBox={speedBox}
         isActive={false}
       />
     </group>
+  )
+}
+
+/** The cobalt cross: four arrows around a steel hub, each a real button. */
+function DPad({
+  onLeft,
+  onRight,
+  onUp,
+  onDown,
+}: {
+  readonly onLeft: () => void
+  readonly onRight: () => void
+  readonly onUp: () => void
+  readonly onDown: () => void
+}): React.ReactElement {
+  const hit = { width: `${ARROW_HIT_PX}px`, height: `${ARROW_HIT_PX}px` } as const
+  return (
+    <div style={{ position: 'relative', width: `${DPAD_PX}px`, height: `${DPAD_PX}px`, flex: '0 0 auto' }}>
+      <div
+        className="grg-hub"
+        style={{
+          position: 'absolute',
+          left: '50%',
+          top: '50%',
+          width: `${HUB_PX}px`,
+          height: `${HUB_PX}px`,
+          transform: 'translate(-50%, -50%)',
+        }}
+      />
+      <button
+        type="button"
+        aria-label="Previous car"
+        className="grg-arrow grg-arrow-left"
+        style={{ ...hit, left: 0, top: '50%', transform: 'translateY(-50%)' }}
+        onClick={onLeft}
+      />
+      <button
+        type="button"
+        aria-label="Next car"
+        className="grg-arrow grg-arrow-right"
+        style={{ ...hit, right: 0, top: '50%', transform: 'translateY(-50%)' }}
+        onClick={onRight}
+      />
+      <button
+        type="button"
+        aria-label="Previous livery"
+        className="grg-arrow grg-arrow-up"
+        style={{ ...hit, top: 0, left: '50%', transform: 'translateX(-50%)' }}
+        onClick={onUp}
+      />
+      <button
+        type="button"
+        aria-label="Next livery"
+        className="grg-arrow grg-arrow-down"
+        style={{ ...hit, bottom: 0, left: '50%', transform: 'translateX(-50%)' }}
+        onClick={onDown}
+      />
+    </div>
   )
 }
 
@@ -108,6 +191,7 @@ export function PaintShop({
   readonly onClose: () => void
 }): React.ReactElement {
   const setLivery = useMutation(api.livery.setLivery)
+  const [chassis, setChassis] = useState(driver.chassis ?? driver.index)
   const [paint, setPaint] = useState(driver.paint ?? PAINTS[driver.index % PAINTS.length].hex)
   const [livery, setPattern] = useState(driver.livery ?? DEFAULT_LIVERY_ID)
   const [saving, setSaving] = useState(false)
@@ -117,32 +201,81 @@ export function PaintShop({
   const draggingRef = useRef(false)
   const dragStart = useRef<{ readonly x: number; readonly yaw: number } | null>(null)
 
-  useEffect(() => {
-    const onKey = (event: KeyboardEvent): void => {
-      if (event.key === 'Escape') {
-        event.stopPropagation()
-        onClose()
-      }
-    }
-    // Capture, for the same reason the cabinet's own Escape is captured: the
-    // race channel listens for keys too, and the topmost surface wins.
-    window.addEventListener('keydown', onKey, true)
-    return () => window.removeEventListener('keydown', onKey, true)
-  }, [onClose])
+  const liveryIndex = Math.max(0, LIVERIES.findIndex((option) => option.id === livery))
+  const liveryName = LIVERIES[liveryIndex]?.name ?? 'Plain'
+  const stats = toPowerStats(driver.score, driver.velocity)
+
+  const stepChassis = useCallback((delta: number): void => {
+    setChassis((current) => cycle(current, delta, CHASSIS_COUNT))
+  }, [])
+  const stepLivery = useCallback((delta: number): void => {
+    setPattern((current) => {
+      const index = Math.max(0, LIVERIES.findIndex((option) => option.id === current))
+      return LIVERIES[cycle(index, delta, LIVERIES.length)].id
+    })
+  }, [])
 
   const handleApply = useCallback(async (): Promise<void> => {
+    if (saving) return
     setSaving(true)
     setError(null)
     try {
-      await setLivery({ key: driver.key, paint, livery })
+      // The mutation writes whoever is signed in; the driver shown is only
+      // ever the one the session belongs to.
+      await setLivery({ paint, livery, chassis })
       onClose()
     } catch (cause) {
-      // Never silent: the window stays open with the reason on it, because a
-      // paint job that quietly did not save is worse than one that failed.
-      setError(cause instanceof Error ? cause.message : 'Could not save')
+      // Never silent: the window stays open with the reason on the bar,
+      // because a paint job that quietly did not save is worse than one that
+      // failed.
+      console.error('Could not save the livery', cause)
+      setError(saveErrorMessage(cause, 'car'))
       setSaving(false)
     }
-  }, [setLivery, driver.key, paint, livery, onClose])
+  }, [saving, setLivery, paint, livery, chassis, onClose])
+
+  useEffect(() => {
+    const onKey = (event: KeyboardEvent): void => {
+      let handled = true
+      switch (event.key) {
+        case 'Escape':
+          onClose()
+          break
+        case 'ArrowLeft':
+          stepChassis(-1)
+          break
+        case 'ArrowRight':
+          stepChassis(1)
+          break
+        case 'ArrowUp':
+          stepLivery(-1)
+          break
+        case 'ArrowDown':
+          stepLivery(1)
+          break
+        case 'Enter':
+          void handleApply()
+          break
+        default: {
+          const digit = Number.parseInt(event.key, 10)
+          if (Number.isInteger(digit) && digit >= 1 && digit <= PAINTS.length) {
+            setPaint(PAINTS[digit - 1].hex)
+          } else {
+            handled = false
+          }
+        }
+      }
+      if (!handled) return
+      event.preventDefault()
+      // Capture, and stopped dead: the cabinet counts the number keys and the
+      // race channel listens for arrows, and the topmost surface wins.
+      event.stopImmediatePropagation()
+    }
+    window.addEventListener('keydown', onKey, true)
+    return () => window.removeEventListener('keydown', onKey, true)
+  }, [onClose, stepChassis, stepLivery, handleApply])
+
+  const prompt = error ?? (saving ? 'Saving…' : null)
 
   return (
     <motion.div
@@ -151,7 +284,7 @@ export function PaintShop({
       exit={{ opacity: 0 }}
       transition={{ duration: 0.16 }}
       role="dialog"
-      aria-label={`Paint shop — ${driver.name}`}
+      aria-label={`Select car — ${driver.name}`}
       style={{
         // Fixed to the viewport, not to the race: in the stacked layout the
         // race is a band with its overflow clipped, and a dialog inside it
@@ -174,79 +307,64 @@ export function PaintShop({
       />
 
       <motion.div
+        className="grg-frame"
         initial={{ y: 18, opacity: 0 }}
         animate={{ y: 0, opacity: 1 }}
         exit={{ y: 18, opacity: 0 }}
         transition={{ duration: 0.22, ease: [0.2, 0.8, 0.2, 1] }}
         style={{
           position: 'relative',
-          width: '600px',
+          width: `${WINDOW_WIDTH_PX}px`,
           maxWidth: '94%',
-          // The frame fits the screen; the option list scrolls if it must.
+          // The frame fits the screen; on a short one the picture scrolls.
           maxHeight: scaledViewport('vh', 32),
           display: 'flex',
           flexDirection: 'column',
-          background: ARCADE.ground,
-          border: `2px solid ${ARCADE.rule}`,
-          boxShadow: '0 0 0 1px #000, 0 18px 0 rgba(0,0,0,0.5)',
+          gap: '8px',
+          padding: '10px 14px 14px',
+          overflowY: 'auto',
         }}
       >
         <div
           style={{
+            position: 'relative',
+            height: `${TITLE_ROW_PX}px`,
             display: 'flex',
             alignItems: 'center',
-            justifyContent: 'space-between',
-            padding: '9px 14px',
-            borderBottom: `2px solid ${ARCADE.rule}`,
+            justifyContent: 'center',
           }}
         >
-          <span style={{ display: 'flex', alignItems: 'baseline', gap: '12px' }}>
-            <span className="gt-label" style={{ fontFamily: FONTS.hud, fontSize: `${UI_TYPE.caption}px`, color: ARCADE.label, ...RED_BEVEL }}>
-              Paint shop
-            </span>
-            <span className="gt-label" style={{ fontSize: `${UI_TYPE.heading}px`, color: paint, ...INK }}>
-              {driver.name}
-            </span>
-            <span className="gt-label" style={{ fontFamily: FONTS.hud, fontSize: `${PS1_TYPE.micro}px`, color: ARCADE.grey }}>
-              {fmtTokensShort(driver.score)} tokens
-            </span>
+          <span className="grg-title" style={{ fontFamily: FONTS.codec, fontSize: `${UI_TYPE.title}px` }}>
+            Select car {chassis + 1}
           </span>
-          <span style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-            <span
-              className="gt-label"
-              style={{ fontFamily: FONTS.hud, fontSize: `${UI_TYPE.caption}px`, color: ARCADE.amber, animation: 'blink 1.4s step-end infinite' }}
-            >
-              Race held
-            </span>
-            <button
-              type="button"
-              onClick={onClose}
-              className="gt-label"
-              style={{
-                ...BUTTON_FONT,
-                background: 'none',
-                border: `1px solid ${ARCADE.rule}`,
-                color: ARCADE.silver,
-                fontSize: `${UI_TYPE.caption}px`,
-                padding: '4px 10px',
-              }}
-            >
-              Esc
-            </button>
+          <span
+            className="gt-label"
+            style={{
+              position: 'absolute',
+              right: '4px',
+              fontFamily: FONTS.hud,
+              fontSize: `${UI_TYPE.caption}px`,
+              color: ARCADE.amber,
+              animation: 'blink 1.4s step-end infinite',
+            }}
+          >
+            Race held
           </span>
         </div>
 
-        {/* The turntable, at the window's full width. */}
+        {/* The picture, at the window's full width. */}
         <div
+          className="grg-bezel"
           style={{
             position: 'relative',
             flex: '0 0 auto',
-            height: `${TURNTABLE_HEIGHT_PX}px`,
-            background: ARCADE.groundDeep,
-            borderBottom: `2px solid ${ARCADE.rule}`,
+            height: `${PICTURE_HEIGHT_PX}px`,
+            overflow: 'hidden',
             touchAction: 'none',
           }}
           onPointerDown={(event) => {
+            // Buttons over the picture are theirs; the turntable takes the rest.
+            if ((event.target as HTMLElement).closest('button')) return
             draggingRef.current = true
             dragStart.current = { x: event.clientX, yaw: yawRef.current }
             event.currentTarget.setPointerCapture(event.pointerId)
@@ -268,15 +386,24 @@ export function PaintShop({
           <Canvas
             dpr={1}
             flat
-            gl={{ antialias: false, powerPreference: 'low-power', alpha: true }}
-            camera={{ fov: 30, near: 0.5, far: 40, position: [0, 1.0, 3.9] }}
+            gl={{ antialias: false, powerPreference: 'low-power', alpha: false }}
+            camera={{ fov: CAMERA.fov, near: 0.3, far: 60, position: [...CAMERA.position] }}
             style={{ height: '100%', width: '100%', imageRendering: 'pixelated' }}
             resize={{ scroll: false }}
-            onCreated={({ camera }) => camera.lookAt(0, 0.32, 0)}
+            onCreated={({ camera, gl }) => {
+              camera.lookAt(CAMERA.target)
+              gl.setClearColor(GARAGE.bezel)
+            }}
           >
+            {/* Two boundaries, so the room is up while a car is still loading
+                and swapping chassis never blanks the wall. */}
+            <Suspense fallback={null}>
+              <Garage />
+            </Suspense>
             <Suspense fallback={null}>
               <Turntable
-                driver={driver}
+                chassis={chassis}
+                color={driver.color}
                 paint={paint}
                 livery={livery}
                 yawRef={yawRef}
@@ -285,159 +412,134 @@ export function PaintShop({
             </Suspense>
           </Canvas>
 
-          <span
-            className="gt-label"
+          {/* The spec block. */}
+          <div
             style={{
               position: 'absolute',
-              right: '12px',
-              bottom: '8px',
-              fontFamily: FONTS.hud,
-              fontSize: `${UI_TYPE.caption}px`,
-              color: ARCADE.grey,
+              left: '14px',
+              top: '12px',
+              display: 'flex',
+              flexDirection: 'column',
+              gap: '3px',
               pointerEvents: 'none',
             }}
           >
-            Drag to turn
-          </span>
-        </div>
-
-        <div style={{ padding: '12px 14px 14px', display: 'flex', flexDirection: 'column', gap: '12px', overflowY: 'auto', minHeight: 0 }}>
-          <div>
-            <span className="gt-label" style={{ fontFamily: FONTS.hud, fontSize: `${UI_TYPE.caption}px`, color: ARCADE.label, ...RED_BEVEL }}>
-              Paint
+            <span className="grg-lemon" style={{ fontFamily: FONTS.body, fontSize: `${UI_TYPE.heading}px` }}>
+              {driver.name}
             </span>
-            <div style={{ display: 'flex', gap: '6px', marginTop: '7px' }}>
-              {PAINTS.map((option) => {
-                const chosen = option.hex === paint
-                return (
-                  <button
-                    key={option.id}
-                    type="button"
-                    title={option.name}
-                    aria-label={option.name}
-                    aria-pressed={chosen}
-                    onClick={() => setPaint(option.hex)}
-                    style={{
-                      flex: 1,
-                      height: '34px',
-                      background: option.hex,
-                      border: chosen ? '2px solid #fff' : `1px solid ${ARCADE.rule}`,
-                      boxShadow: chosen
-                        ? `0 0 0 2px ${option.hex}`
-                        : 'inset -3px -3px 0 0 rgba(0,0,0,0.4)',
-                      padding: 0,
-                    }}
-                  />
-                )
-              })}
-            </div>
+            <span className="grg-lemon" style={{ fontFamily: FONTS.body, fontSize: `${UI_TYPE.body}px` }}>
+              Car: {chassis + 1} of {CHASSIS_COUNT}
+            </span>
+            <span className="grg-lemon" style={{ fontFamily: FONTS.body, fontSize: `${UI_TYPE.body}px` }}>
+              Level: {stats.level}
+            </span>
+            <span className="grg-lemon" style={{ fontFamily: FONTS.body, fontSize: `${UI_TYPE.body}px` }}>
+              {stats.power} bhp, {stats.speed} rpm
+            </span>
           </div>
 
-          <div>
-            <span className="gt-label" style={{ fontFamily: FONTS.hud, fontSize: `${UI_TYPE.caption}px`, color: ARCADE.label, ...RED_BEVEL }}>
+          {/* The livery, as the big word in the corner. */}
+          <div
+            style={{
+              position: 'absolute',
+              left: '14px',
+              bottom: '12px',
+              display: 'flex',
+              flexDirection: 'column',
+              gap: '2px',
+              pointerEvents: 'none',
+            }}
+          >
+            <span className="grg-lemon" style={{ fontFamily: FONTS.hud, fontSize: `${UI_TYPE.caption}px` }}>
               Livery
             </span>
-            <div
-              style={{
-                display: 'grid',
-                gridTemplateColumns: 'repeat(3, 1fr)',
-                gap: '6px',
-                marginTop: '7px',
-              }}
-            >
-              {LIVERIES.map((option) => {
-                const chosen = option.id === livery
-                return (
-                  <button
-                    key={option.id}
-                    type="button"
-                    aria-pressed={chosen}
-                    onClick={() => setPattern(option.id)}
-                    style={{
-                      ...BUTTON_FONT,
-                      background: chosen ? '#160606' : ARCADE.groundDeep,
-                      border: chosen ? `2px solid ${ARCADE.label}` : `1px solid ${ARCADE.rule}`,
-                      padding: '6px 8px',
-                      textAlign: 'left',
-                      display: 'flex',
-                      flexDirection: 'column',
-                      gap: '2px',
-                    }}
-                  >
-                    <span
-                      className="gt-label"
-                      style={{ fontSize: `${UI_TYPE.prose}px`, color: chosen ? ARCADE.value : ARCADE.silver }}
-                    >
-                      {option.name}
-                    </span>
-                    <span
-                      className="gt-label"
-                      style={{ fontFamily: FONTS.hud, fontSize: `${UI_TYPE.caption}px`, color: ARCADE.grey, whiteSpace: 'normal', lineHeight: 1.4 }}
-                    >
-                      {option.note}
-                    </span>
-                  </button>
-                )
-              })}
-            </div>
-          </div>
-
-          {error !== null && (
-            // Wrapped, and allowed to be as tall as it needs to be. A backend
-            // error is a sentence, not a label, and `.gt-label` holds every
-            // line on one line — which put the reason off the side of the
-            // window, exactly where nobody would read it.
-            <span
-              role="alert"
-              className="gt-label"
-              style={{
-                fontSize: `${UI_TYPE.prose}px`,
-                color: PS1.hot,
-                whiteSpace: 'normal',
-                lineHeight: 1.5,
-                textTransform: 'none',
-                letterSpacing: '0.02em',
-              }}
-            >
-              {error}
+            <span className="grg-lemon-lg" style={{ fontFamily: FONTS.body, fontSize: `${UI_TYPE.title}px` }}>
+              {liveryName}
             </span>
-          )}
-
-          <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '8px' }}>
-            <button
-              type="button"
-              onClick={onClose}
-              className="gt-label"
-              style={{
-                ...BUTTON_FONT,
-                background: ARCADE.groundDeep,
-                border: `1px solid ${ARCADE.rule}`,
-                color: ARCADE.grey,
-                fontSize: `${UI_TYPE.prose}px`,
-                padding: '10px 18px',
-              }}
-            >
-              Cancel
-            </button>
-            <button
-              type="button"
-              onClick={() => void handleApply()}
-              disabled={saving}
-              className="gt-label"
-              style={{
-                ...BUTTON_FONT,
-                background: ARCADE.label,
-                border: '1px solid #000',
-                color: '#fff',
-                fontSize: `${UI_TYPE.prose}px`,
-                padding: '10px 22px',
-                opacity: saving ? 0.6 : 1,
-                ...RED_BEVEL,
-              }}
-            >
-              {saving ? 'Saving…' : 'Apply — green flag'}
-            </button>
           </div>
+
+          {/* Paint and the d-pad. */}
+          <div
+            style={{
+              position: 'absolute',
+              right: '14px',
+              bottom: '10px',
+              display: 'flex',
+              alignItems: 'flex-end',
+              gap: '14px',
+            }}
+          >
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '6px', paddingBottom: '8px' }}>
+              <span className="grg-lemon" style={{ fontFamily: FONTS.hud, fontSize: `${UI_TYPE.caption}px` }}>
+                Paint 1–{PAINTS.length}
+              </span>
+              <div style={{ display: 'flex', gap: '4px' }}>
+                {PAINTS.map((option, index) => {
+                  const chosen = option.hex === paint
+                  return (
+                    <button
+                      key={option.id}
+                      type="button"
+                      title={`${index + 1} — ${option.name}`}
+                      aria-label={option.name}
+                      aria-pressed={chosen}
+                      onClick={() => setPaint(option.hex)}
+                      className={chosen ? 'grg-swatch grg-swatch-on' : 'grg-swatch'}
+                      style={{ width: `${SWATCH_PX}px`, height: `${SWATCH_PX}px`, background: option.hex }}
+                    />
+                  )
+                })}
+              </div>
+            </div>
+            <DPad
+              onLeft={() => stepChassis(-1)}
+              onRight={() => stepChassis(1)}
+              onUp={() => stepLivery(-1)}
+              onDown={() => stepLivery(1)}
+            />
+          </div>
+        </div>
+
+        {/* The prompt bar: what the buttons do, or why the save failed. */}
+        <div
+          className="grg-prompt"
+          role={error === null ? undefined : 'alert'}
+          style={{
+            fontFamily: FONTS.hud,
+            fontSize: `${UI_TYPE.caption}px`,
+            padding: '7px 12px',
+            display: 'flex',
+            justifyContent: 'center',
+            alignItems: 'center',
+            gap: '18px',
+            ...(error === null ? {} : { whiteSpace: 'normal', lineHeight: 1.4 }),
+          }}
+        >
+          {prompt !== null ? (
+            <span>{prompt}</span>
+          ) : (
+            <>
+              <span>Left/right: car</span>
+              <span>Up/down: livery</span>
+              <span>1–{PAINTS.length}: paint</span>
+              <button
+                type="button"
+                onClick={() => void handleApply()}
+                className="arc-button"
+                style={{ ...BUTTON_FONT, background: 'none', border: 'none', padding: 0 }}
+              >
+                Enter: save
+              </button>
+              <button
+                type="button"
+                onClick={onClose}
+                className="arc-button"
+                style={{ ...BUTTON_FONT, background: 'none', border: 'none', padding: 0 }}
+              >
+                Esc: back
+              </button>
+            </>
+          )}
         </div>
       </motion.div>
     </motion.div>

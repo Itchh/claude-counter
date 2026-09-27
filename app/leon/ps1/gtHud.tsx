@@ -313,9 +313,16 @@ export function Tachometer({
         ))}
         <g
           className={live ? 'gt-needle gt-needle-live' : 'gt-needle'}
-          style={{ transform: `rotate(${needleAngle}deg)`, transformOrigin: '60px 60px' }}
+          // Drawn about its own pivot and then moved to the hub, rather than
+          // left where the dial is and spun with `transform-origin`. Origin on
+          // an SVG child is the one CSS transform property browsers still
+          // disagree about — Safari ignored the 60px/60px here and swung the
+          // needle around the top-left of the viewBox, which is why the dial
+          // read zero while a detached orange wedge sat off in the gap below
+          // the eight. A translate carries no such ambiguity.
+          style={{ transform: `translate(60px, 60px) rotate(${needleAngle}deg)` }}
         >
-          <polygon points="57,62 63,62 61,20 59,20" fill={GT.needle} />
+          <polygon points="-3,2 3,2 1,-40 -1,-40" fill={GT.needle} />
         </g>
         <circle cx={centre} cy={centre} r={7} fill={GT.metalFace} stroke={GT.metalHi} strokeWidth={2} />
       </svg>
@@ -326,6 +333,126 @@ export function Tachometer({
         {caption}
       </span>
     </span>
+  )
+}
+
+/** Segments on the rev bar, and how many at the top of it are red. */
+const REV_SEGMENTS = 14
+const REV_HOT_SEGMENTS = 4
+/** Sweep of the bar, in degrees clockwise from straight up. */
+const REV_START_DEG = -108
+const REV_END_DEG = 52
+const REV_GAP_DEG = 2.4
+const REV_OUTER = 56
+const REV_INNER = 42
+
+/** The lemon every touring-car HUD lit its segments and its gear in. */
+const REV_LIT = '#f2e83a'
+const REV_HOT = '#e02020'
+const REV_UNLIT = '#26262c'
+
+/**
+ * The segmented rev bar — the touring-car games' answer to the dial. An arc
+ * of hard wedges that light from the left, the last few in red, and nothing
+ * else: no needle, no numbers. The revs are a fraction of the redline, and
+ * arrive from the simulation's own gearbox rather than from a burn rate.
+ */
+export function RevBar({
+  rpm,
+  size = 150,
+  live = false,
+}: {
+  /** Engine speed, 0..1 of the redline. */
+  readonly rpm: number
+  readonly size?: number
+  /** Whether the car is moving. The bar flutters on a live engine. */
+  readonly live?: boolean
+}): React.ReactElement {
+  const [rev, setRev] = useState(0)
+
+  useEffect(() => {
+    if (!live) {
+      setRev(0)
+      return
+    }
+    let step = 0
+    const id = setInterval(() => {
+      step += 1
+      setRev((revNoise(step) - 0.5) * REV_FLUTTER * 2)
+    }, REV_TICK_MS)
+    return () => clearInterval(id)
+  }, [live])
+
+  const fraction = Math.max(0, Math.min(1, rpm + rev))
+  const lit = Math.round(fraction * REV_SEGMENTS)
+  const sweep = REV_END_DEG - REV_START_DEG
+  const step = sweep / REV_SEGMENTS
+  const centre = 60
+
+  const segments = Array.from({ length: REV_SEGMENTS }, (_, index) => {
+    const a0 = REV_START_DEG + index * step
+    const a1 = a0 + step - REV_GAP_DEG
+    const points = [
+      polar(centre, centre, REV_OUTER, a0),
+      polar(centre, centre, REV_OUTER, a1),
+      polar(centre, centre, REV_INNER, a1),
+      polar(centre, centre, REV_INNER, a0),
+    ]
+    const isHot = index >= REV_SEGMENTS - REV_HOT_SEGMENTS
+    const isLit = index < lit
+    return {
+      index,
+      points: points.map(([x, y]) => `${x.toFixed(1)},${y.toFixed(1)}`).join(' '),
+      fill: isLit ? (isHot ? REV_HOT : REV_LIT) : REV_UNLIT,
+    }
+  })
+
+  return (
+    <svg
+      width={size}
+      height={size}
+      viewBox="0 0 120 120"
+      role="img"
+      aria-label={`Revs ${Math.round(fraction * 100)}%`}
+      style={{ display: 'block', filter: 'drop-shadow(2px 2px 0 rgba(0,0,0,0.9))' }}
+    >
+      {segments.map((segment) => (
+        <polygon key={segment.index} points={segment.points} fill={segment.fill} stroke="#000" strokeWidth={1.2} />
+      ))}
+    </svg>
+  )
+}
+
+/**
+ * The stopwatch that sits beside the running clock in the corner. A rim, a
+ * face with twelve ticks, a crown, and the red ring the reference throws
+ * around it — drawn flat, in the same three colours as the rest of the HUD.
+ */
+export function StopwatchMark({ size = 44 }: { readonly size?: number }): React.ReactElement {
+  const centre = 24
+  const ticks = Array.from({ length: 12 }, (_, index) => {
+    const angle = index * 30
+    const [x1, y1] = polar(centre, centre + 2, 13, angle)
+    const [x2, y2] = polar(centre, centre + 2, 10, angle)
+    return { index, x1, y1, x2, y2 }
+  })
+  return (
+    <svg
+      width={size}
+      height={size}
+      viewBox="0 0 48 48"
+      aria-hidden
+      style={{ display: 'block', filter: 'drop-shadow(2px 2px 0 rgba(0,0,0,0.9))' }}
+    >
+      <ellipse cx={centre} cy={centre + 2} rx={22} ry={12} fill="none" stroke={REV_HOT} strokeWidth={3} transform={`rotate(-28 ${centre} ${centre + 2})`} />
+      <rect x={centre - 3} y={2} width={6} height={6} fill={GT.metalHi} stroke="#000" strokeWidth={1} />
+      <circle cx={centre} cy={centre + 2} r={16} fill={GT.metalHi} stroke="#000" strokeWidth={1.5} />
+      <circle cx={centre} cy={centre + 2} r={13} fill={GT.dialFace} />
+      {ticks.map((tick) => (
+        <line key={tick.index} x1={tick.x1} y1={tick.y1} x2={tick.x2} y2={tick.y2} stroke={GT.dialTick} strokeWidth={1.5} />
+      ))}
+      <line x1={centre} y1={centre + 2} x2={centre + 6} y2={centre - 6} stroke={REV_HOT} strokeWidth={2} />
+    </svg>
   )
 }
 

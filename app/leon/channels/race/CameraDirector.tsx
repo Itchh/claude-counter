@@ -14,7 +14,11 @@ import {
   FREE_IDLE_RETURN_S,
   type CameraControlState,
 } from './cameraControls'
-import { resolveCameraCollision } from './cameraCollision'
+import {
+  resolveCameraCollision,
+  resolveCameraOcclusion,
+  createSightState,
+} from './cameraCollision'
 import type { SimRacer } from './useRaceSim'
 
 // A racing-game replay director. The rule borrowed from the era: cameras CUT,
@@ -48,9 +52,19 @@ const ONBOARD_LOOK_AHEAD = 9
 /** Onboard tracks tightly — a laggy POV feels like a drone, not a driver. */
 const ONBOARD_SMOOTHING = 9
 
-/** The establishing shot's height and standoff, as fractions of the lap. */
-const HIGH_SHOT_RISE = 0.62
-const HIGH_SHOT_BACK = 0.62
+/**
+ * The establishing shot. Height as a fraction of the lap's radius, clamped so
+ * a kart oval still gets a crane and a mountain circuit does not get a
+ * satellite — and stood over the start line rather than over the middle of
+ * the lap, because the start line is the one point guaranteed to be inside
+ * the world. See the high-shot branch below for what the middle turned out
+ * to be.
+ */
+const HIGH_SHOT_HEIGHT_FRACTION = 0.22
+const HIGH_SHOT_MIN_HEIGHT = 45
+const HIGH_SHOT_MAX_HEIGHT = 170
+/** How far behind the start line the crane stands, as a fraction of height. */
+const HIGH_SHOT_BACK = 0.8
 
 const BASE_FOV = 68
 const ONBOARD_FOV_MIN = 70
@@ -75,6 +89,24 @@ const FOLLOW_PIVOT_HEIGHT = 1.1
 const LATCH_DURATION_S = 1.15
 /** How far ahead the pre-latch framing is assumed to be, for the look blend. */
 const LATCH_LOOK_DISTANCE = 14
+
+/**
+ * Height above the road of the point every shot's sightline is tested to.
+ * Roughly a driver's head: testing to the tarmac itself puts the line through
+ * the road surface on any crest and pulls the camera in for no reason.
+ *
+ * Measured from the ground index under the car rather than from the car's
+ * own y, which comes off a smoothed profile: on a rip the two can disagree by
+ * a metre, and a pivot a metre under the tarmac sees nothing but tarmac.
+ */
+const SIGHT_PIVOT_HEIGHT = 1.4
+
+/** Puts the sightline pivot over the car, on the surface actually drawn. */
+function placeSightPivot(circuit: Circuit, target: THREE.Vector3, out: THREE.Vector3): void {
+  const surface = circuit.groundAt(target.x, target.z, target.y)
+  const base = Number.isNaN(surface) ? target.y : Math.max(target.y, surface)
+  out.set(target.x, base + SIGHT_PIVOT_HEIGHT, target.z)
+}
 
 export type ShotKind = 'chase' | 'onboard' | 'trackside' | 'high' | 'follow' | 'free'
 
@@ -142,6 +174,8 @@ export function CameraDirector({
   const latch = useRef(1)
   /** Set on a cut: the next frame places the camera outright, without easing. */
   const cutting = useRef(true)
+  /** How far the lens is currently allowed to stand off its subject. */
+  const sight = useRef(createSightState())
 
   useCameraInput(controlsRef, enabled, onInteract)
 
@@ -155,6 +189,7 @@ export function CameraDirector({
       latchLookFrom: new THREE.Vector3(),
       latchLookTo: new THREE.Vector3(),
       forward: new THREE.Vector3(),
+      pivot: new THREE.Vector3(),
     }),
     [],
   )
@@ -270,6 +305,18 @@ export function CameraDirector({
         resolveCameraCollision(circuit, camera.position, delta, {
           referenceY: scratch.lookAt.y,
         })
+        // The orbit is the one rig the viewer aims themselves, and they will
+        // happily swing it into a hillside or leave it outside a tunnel the
+        // car has just entered. Same rule as the broadcast shots: the lens
+        // comes in front of whatever the line crosses.
+        placeSightPivot(circuit, scratch.target, scratch.pivot)
+        resolveCameraOcclusion(
+          circuit,
+          scratch.pivot,
+          camera.position,
+          delta,
+          sight.current,
+        )
       }
       camera.lookAt(scratch.lookAt)
       return
@@ -353,26 +400,38 @@ export function CameraDirector({
       camera.position.copy(scratch.desired)
       scratch.lookAt.copy(scratch.target)
     } else {
-      // High wide: the whole circuit, so the room can read the shape of the
-      // day. Framed off the circuit's own radius rather than a fixed height,
-      // or a large track is shot from inside its own infield — and aimed at
-      // the middle of the LAP rather than the middle of the world, which on
-      // an imported circuit are different places. Pointed at the origin, this
-      // shot spent its ten seconds looking at the backdrop while the race
-      // happened off to the left.
-      // Kept under the rip's own backdrop. A downloaded circuit is modelled
-      // inside a bowl of painted scenery a kilometre high, and the classic
-      // establishing height — one and a half times the lap's radius — puts
-      // the camera outside it, filming the back of a mountain while the race
-      // happens on the other side. Two thirds of the radius stays inside the
-      // bowl, which costs the full lap in frame and buys a shot of the
-      // circuit rather than of its wallpaper.
-      camera.position.set(
-        circuit.centre.x,
-        circuit.centre.y + circuit.radius * HIGH_SHOT_RISE,
-        circuit.centre.z + circuit.radius * HIGH_SHOT_BACK,
+      // High wide: the establishing shot, so the room can read the shape of
+      // the day.
+      //
+      // It used to hang over the middle of the lap at two thirds of the
+      // lap's radius, on the theory that this kept it under a rip's painted
+      // backdrop. It did not. A mountain circuit is a lap round a peak, so
+      // the middle of the lap is the peak, and a camera 450 units above it
+      // is above the rim of the scenery bowl — the ten seconds it spent
+      // there were the world seen from outside, backdrop sheets facing away
+      // and sky showing through the valley floor, on both mountain rips,
+      // every rotation. The HUD kept the previous shot's name up, so it read
+      // as an onboard camera that had fallen through the map.
+      //
+      // Now it is a crane over the start line: the one point on the circuit
+      // that is certainly road, certainly inside the world, and certainly
+      // under open sky — and it looks along the lap towards the middle, so
+      // the circuit still unfolds in front of it. The sightline below then
+      // does the rest: if the start straight runs under a bridge or a roof,
+      // the crane comes down to just beneath it.
+      circuit.sampleInto(0, 0, scratch.pivot, scratch.tangent)
+      const craneHeight = Math.min(
+        HIGH_SHOT_MAX_HEIGHT,
+        Math.max(HIGH_SHOT_MIN_HEIGHT, circuit.radius * HIGH_SHOT_HEIGHT_FRACTION),
       )
-      scratch.lookAt.copy(circuit.centre)
+      camera.position
+        .copy(scratch.pivot)
+        .addScaledVector(scratch.tangent, -craneHeight * HIGH_SHOT_BACK)
+        .setY(scratch.pivot.y + craneHeight)
+      scratch.lookAt.copy(circuit.centre).setY(circuit.centre.y)
+      // The establishing shot has no subject, but the sightline still wants
+      // a point on the road to be tested from: the start line itself.
+      scratch.target.copy(scratch.pivot)
     }
 
     const cutFrame = cutting.current
@@ -390,6 +449,21 @@ export function CameraDirector({
       instant: cutFrame || shot === 'trackside' || shot === 'high',
       referenceY: scratch.target.y + 1,
     })
+
+    // Then the sightline, which is the rule that gets a shot through a
+    // tunnel: whatever the rig asked for, the lens sits in front of the
+    // first thing between it and the car. The high wide is tested from the
+    // start line rather than from a car, which is what keeps its crane under
+    // any roof the start straight happens to run beneath.
+    placeSightPivot(circuit, scratch.target, scratch.pivot)
+    resolveCameraOcclusion(
+      circuit,
+      scratch.pivot,
+      camera.position,
+      delta,
+      sight.current,
+      { instant: cutFrame || shot === 'high' },
+    )
 
     easeFov(camera, targetFov, delta)
     camera.lookAt(scratch.lookAt)

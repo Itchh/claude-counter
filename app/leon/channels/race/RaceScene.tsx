@@ -2,8 +2,10 @@
 
 import { Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Canvas, useFrame, useThree } from '@react-three/fiber'
-import { useQuery } from 'convex/react'
+import { useMutation, useQuery } from 'convex/react'
+import { useCachedQuery } from '@/lib/useCachedQuery'
 import * as THREE from 'three'
+import { ContextGuard } from '../../ps1/ContextGuard'
 import { api } from '../../../../convex/_generated/api'
 import { Track } from './Track'
 import { Racer } from './Racer'
@@ -19,8 +21,9 @@ import {
 import { RaceHud } from './RaceHud'
 import { PaintShopLayer, type PaintShopDriver } from './PaintShop'
 import { RacerFx } from './RacerFx'
+import { SkidMarks } from './SkidMarks'
 import { RaceAudio } from './RaceAudio'
-import { chassisFor } from './cars'
+import { chassisOf } from './cars'
 import { ParkedCars } from './ParkedCars'
 import { useRaceSim, type SimRacer } from './useRaceSim'
 import { CircuitProvider, useCircuitFor } from './CircuitContext'
@@ -29,6 +32,13 @@ import { setJitterAspect } from './Ps1Material'
 import { PS1 } from '../../ps1/theme'
 import { useInteractionSignal } from '../../ps1/navigation'
 import type { RaceChannelProps } from './RaceChannel'
+import { useMe } from '../../control/useMe'
+import { useDrive } from '../../control/useDrive'
+import { ControlOverlay, type RemoteDriver } from '../../control/ControlOverlay'
+import { isRemoteLive, type GhostSample, type RacePose } from '../../control/types'
+import { GhostCar } from './GhostCar'
+import { formatLapMs } from '@/lib/eventText'
+import { fillRoster, isCpuKey } from '@/lib/cpuRoster'
 
 // CH 01. Karts driven by live burn rate, laps accumulating all day.
 //
@@ -41,6 +51,13 @@ import type { RaceChannelProps } from './RaceChannel'
 // pixels and the race becomes unreadable from the back of the room.
 
 const HUD_REFRESH_MS = 500
+/** The nitro bar and the driver chips read at this rate. Plenty. */
+const CONTROL_REFRESH_MS = 200
+/**
+ * The smallest grid the channel will show. A thinner roster is padded with
+ * CPU drivers from lib/cpuRoster — browser-only bots that never reach Convex.
+ */
+const MIN_RACE_FIELD = 4
 
 export function RaceScene({ isLive, paused = false, audioOn = false }: RaceChannelProps): React.ReactElement {
   // Whose paint shop is open, if anyone's. Holding it here rather than in the
@@ -60,7 +77,21 @@ export function RaceScene({ isLive, paused = false, audioOn = false }: RaceChann
   // two reasons are the same reason: the picture behind an open window is
   // there to be read, not to move on without you.
   const running = isLive && !paused && setupKey === null
-  const race = useQuery(api.scoring.getRace, { period: 'day' })
+  // Today's grid, and the month's behind it: a grid that waits for someone
+  // to burn tokens today is empty most mornings, and an empty grid shows
+  // nobody the game. The day wins whenever it has a field; the month is
+  // the attract mode.
+  const today = useCachedQuery('race:day', api.scoring.getRace, { period: 'day' })
+  const todayHasField = today !== undefined && today.racers.length >= 2
+  const month = useCachedQuery('race:month', api.scoring.getRace, todayHasField ? 'skip' : { period: 'month' })
+  const race = todayHasField ? today : (month ?? today)
+  // The grid as drawn: the real roster, padded with CPU drivers once the
+  // query has resolved. Not before — bots that appear and then vanish as the
+  // real field loads read as a glitch, not a game.
+  const roster = useMemo(
+    () => (race === undefined ? undefined : fillRoster(race.racers, MIN_RACE_FIELD)),
+    [race],
+  )
   // Viewer camera input. Lives outside React entirely: pointer, wheel and key
   // events all land here, and the director reads it inside useFrame.
   const controls = useRef<CameraControlState>(createCameraControlState())
@@ -96,8 +127,37 @@ export function RaceScene({ isLive, paused = false, audioOn = false }: RaceChann
     TRACKS.find((candidate) => candidate.slug === pinnedSlug) ??
     trackForRaceWindow(race?.periodKey, raceClock)
   const circuit = useCircuitFor(track)
+
+  // The wheel. Who is signed in, whether their car is on the grid, and the
+  // link the simulation reads every frame.
+  const me = useMe()
+  const drive = useDrive<RacePose>('race', me)
+  const canDrive = me !== null && me !== undefined && (race?.racers.some((racer) => racer.key === me.key) ?? false)
+  const recordHotLap = useMutation(api.hotlaps.recordHotLap)
+  const hotLapBoard = useQuery(api.hotlaps.board, { trackSlug: track.slug })
+  const ghost = useQuery(api.hotlaps.myGhost, me ? { trackSlug: track.slug } : 'skip')
+  const trackSlugRef = useRef(track.slug)
+  trackSlugRef.current = track.slug
+  // A completed driven lap goes to the server as a hot lap and a ghost.
+  useEffect(() => {
+    drive.link.onLap = (lapSeconds: number, samples: ReadonlyArray<GhostSample>): void => {
+      // A CPU car cannot be taken, so this should never fire for one — but a
+      // bot's lap must never reach the server, so the door is bolted here too.
+      if (drive.link.drivenKey !== null && isCpuKey(drive.link.drivenKey)) return
+      recordHotLap({ trackSlug: trackSlugRef.current, lapMs: Math.round(lapSeconds * 1000), samples: [...samples] }).catch(
+        (cause: unknown) => {
+          console.error('Hot lap not recorded', cause)
+        },
+      )
+    }
+    return () => {
+      drive.link.onLap = null
+    }
+  }, [drive.link, recordHotLap])
+
   const sim = useRaceSim({
-    racers: race?.racers,
+    racers: roster,
+    drive: drive.link,
     trackLength: circuit.length,
     // The circuit teaches the simulation about its own corners. Without these
     // the field still races, it just races on rails — see UseRaceSimOptions.
@@ -109,6 +169,17 @@ export function RaceScene({ isLive, paused = false, audioOn = false }: RaceChann
     // and the field races as it always did.
     corridorAt: circuit.corridorInto,
   })
+
+  // Development only: the live sim on the window for a browser session to
+  // read. Never in production.
+  useEffect(() => {
+    if (process.env.NODE_ENV === 'production') return
+    const scope = globalThis as typeof globalThis & { raceSim?: typeof sim }
+    scope.raceSim = sim
+    return () => {
+      delete scope.raceSim
+    }
+  }, [sim])
 
   // The HUD is React and must not re-render at frame rate, so it samples the
   // sim on a slow interval instead. Positions on screen stay at 60fps; the
@@ -128,9 +199,15 @@ export function RaceScene({ isLive, paused = false, audioOn = false }: RaceChann
     followRacer(controls.current, racerKey)
   }, [])
 
-  const handleOpenSetup = useCallback((racerKey: string): void => {
-    setSetupKey(racerKey)
-  }, [])
+  // Only your own car opens: setLivery writes to whoever is signed in, so a
+  // shop opened on someone else's car would save their choices onto yours.
+  const myKey = me?.key ?? null
+  const handleOpenSetup = useCallback(
+    (racerKey: string): void => {
+      if (myKey !== null && racerKey === myKey) setSetupKey(racerKey)
+    },
+    [myKey],
+  )
 
   const handleCloseSetup = useCallback((): void => {
     setSetupKey(null)
@@ -139,6 +216,44 @@ export function RaceScene({ isLive, paused = false, audioOn = false }: RaceChann
   const handleReleaseCamera = useCallback((): void => {
     releaseToAuto(controls.current)
   }, [])
+
+  // Taking the wheel puts the camera behind your own car; handing it back
+  // returns it to the broadcast.
+  const handleTake = useCallback((): void => {
+    void drive.take().then(() => {
+      if (me) followRacer(controls.current, me.key)
+    })
+  }, [drive, me])
+  const handleRelease = useCallback((): void => {
+    void drive.release()
+    releaseToAuto(controls.current)
+  }, [drive])
+
+  // The overlay's slow readouts: nitro, and who else is driving.
+  const [nitro, setNitro] = useState({ charge: 0, lit: false })
+  const [remoteDrivers, setRemoteDrivers] = useState<ReadonlyArray<RemoteDriver>>([])
+  useEffect(() => {
+    if (!isLive) return
+    const id = setInterval(() => {
+      setNitro({ charge: drive.link.nitro.charge, lit: drive.link.nitro.lit })
+      const now = Date.now()
+      const drivers: RemoteDriver[] = []
+      for (const [racerKey, remote] of drive.link.remotes) {
+        if (!isRemoteLive(remote, now)) continue
+        const racer = roster?.find((candidate) => candidate.key === racerKey)
+        drivers.push({ racerKey, name: racer?.name ?? racerKey, holderName: remote.holderName })
+      }
+      setRemoteDrivers((current) =>
+        current.length === drivers.length && current.every((d, i) => d.racerKey === drivers[i].racerKey)
+          ? current
+          : drivers,
+      )
+    }, CONTROL_REFRESH_MS)
+    return () => clearInterval(id)
+  }, [isLive, drive.link, roster])
+  const record = hotLapBoard && hotLapBoard.length > 0
+    ? { name: hotLapBoard[0].name, label: formatLapMs(hotLapBoard[0].lapMs) }
+    : null
 
   const handleContextRestored = useCallback((): void => {
     setContextEpoch((epoch) => epoch + 1)
@@ -187,7 +302,7 @@ export function RaceScene({ isLive, paused = false, audioOn = false }: RaceChann
     return () => clearInterval(id)
   }, [running, sim.racers])
 
-  const racerCount = race?.racers.length ?? 0
+  const racerCount = roster?.length ?? 0
 
   // The driver the window is for, resolved from the live query rather than
   // copied into state — a paint job saved here comes back through the same
@@ -200,11 +315,13 @@ export function RaceScene({ isLive, paused = false, audioOn = false }: RaceChann
     return {
       key: racer.key,
       name: racer.name,
-      index: chassisFor(racer.key),
+      index: chassisOf(racer.key, racer.chassis),
+      chassis: racer.chassis,
       color: racer.color ?? PS1.cyan,
       paint: racer.paint,
       livery: racer.livery,
       score: racer.score,
+      velocity: racer.velocityTokensPerMin,
     }
   }, [setupKey, race])
 
@@ -250,7 +367,8 @@ export function RaceScene({ isLive, paused = false, audioOn = false }: RaceChann
             gl.setClearColor(new THREE.Color(track.sky.mid), 0)
           }}
         >
-          <ContextGuard onRestored={handleContextRestored} />
+          <ContextGuard label="Race" onRestored={handleContextRestored} />
+          <DriveTicker drive={drive} sim={sim} isLive={running} controlsRef={controls} />
           <SimDriver sim={sim} isLive={running} />
           {/* Fog lives in the PS1 shader's own uniforms, not three's fog system —
               these materials don't consume scene fog. Kept in sync in Ps1Material.
@@ -277,13 +395,13 @@ export function RaceScene({ isLive, paused = false, audioOn = false }: RaceChann
               within seconds, and the channel went permanently black. */}
           <Suspense fallback={null}>
             {Array.from({ length: racerCount }, (_, index) => {
-              const racer = race?.racers[index]
+              const racer = roster?.[index]
               if (!racer) return null
               return (
                 <Racer
                   key={racer.key}
                   index={index}
-                  chassis={chassisFor(racer.key)}
+                  chassis={chassisOf(racer.key, racer.chassis)}
                   racersRef={sim.racers}
                   name={racer.name}
                   color={racer.color ?? PS1.cyan}
@@ -299,7 +417,15 @@ export function RaceScene({ isLive, paused = false, audioOn = false }: RaceChann
           {/* Flame and tyre smoke for the whole grid. Outside the cars'
               Suspense boundary on purpose: it needs no assets, so it should
               not be held back by one that has not loaded. */}
-          <RacerFx racersRef={sim.racers} enabled={running} />
+          <RacerFx racersRef={sim.racers} fxRef={sim.fx} enabled={running} />
+          {/* Rubber left on the road by the whole grid. Same reasoning as the
+              effects above: no assets, so no boundary. */}
+          <SkidMarks racersRef={sim.racers} enabled={running} />
+
+          {/* Your best lap, replayed under you while you drive. */}
+          {drive.driving && ghost && ghost.samples.length > 0 && (
+            <GhostCar samples={ghost.samples} racersRef={sim.racers} drivenKey={drive.link.drivenKey} />
+          )}
 
           {/* The unraced half of the pack, parked at the verges, and the
               broadcast sound. Both inside the cars' own Suspense reasoning:
@@ -331,6 +457,20 @@ export function RaceScene({ isLive, paused = false, audioOn = false }: RaceChann
           onOpenSetup={handleOpenSetup}
         />
 
+        <ControlOverlay
+          game="race"
+          me={me}
+          canDrive={canDrive && running}
+          driving={drive.driving}
+          taking={drive.taking}
+          error={drive.error}
+          onTake={handleTake}
+          onRelease={handleRelease}
+          nitro={nitro}
+          remoteDrivers={remoteDrivers}
+          record={record}
+        />
+
         <PaintShopLayer driver={setupDriver} onClose={handleCloseSetup} />
       </div>
     </CircuitProvider>
@@ -351,40 +491,55 @@ export function RaceScene({ isLive, paused = false, audioOn = false }: RaceChann
  * hand a context back at all, and remounting on restore is what rebuilds the
  * buffers and programs that died with the old one.
  */
-function ContextGuard({ onRestored }: { onRestored: () => void }): null {
-  const gl = useThree((state) => state.gl)
 
-  useEffect(() => {
-    const canvas = gl.domElement
-
-    const handleLost = (event: Event): void => {
-      // Without this the loss is final and the canvas stays black forever.
-      event.preventDefault()
-      console.warn('Race channel: WebGL context lost — waiting for restore.')
+/**
+ * The wheel's frame work: polls the pad, publishes the driven car's pose,
+ * and keeps the camera from wandering off your own car while you drive.
+ */
+function DriveTicker({
+  drive,
+  sim,
+  isLive,
+  controlsRef,
+}: {
+  drive: ReturnType<typeof useDrive<RacePose>>
+  sim: ReturnType<typeof useRaceSim>
+  isLive: boolean
+  controlsRef: React.RefObject<CameraControlState>
+}): null {
+  useFrame((_, delta) => {
+    if (!isLive) return
+    drive.tick(delta, () => {
+      const key = drive.link.drivenKey
+      const racer = key ? sim.racers.current?.find((candidate) => candidate.key === key) : undefined
+      if (!racer) return null
+      return {
+        game: 'race',
+        t: racer.t,
+        lap: racer.lap,
+        lateral: racer.lateral,
+        yaw: racer.yaw,
+        steer: racer.steer,
+        speed: racer.speed,
+        driftLoad: racer.driftLoad,
+        crashTimer: racer.crashTimer,
+        crashDuration: racer.crashDuration,
+        crashRolls: racer.crashRolls,
+        crashSpin: racer.crashSpin,
+        bumpCount: racer.bumpCount,
+        wallCount: racer.wallCount,
+        crashCount: racer.crashCount,
+        impactT: racer.impactT,
+        impactLateral: racer.impactLateral,
+        boosting: drive.link.nitro.lit,
+      }
+    })
+    // The director hands a followed car back to the broadcast after a
+    // spell of no camera input. Driving is input.
+    if (drive.link.drivenKey !== null && controlsRef.current.mode === 'follow') {
+      controlsRef.current.idle = 0
     }
-    const handleRestored = (): void => {
-      console.warn('Race channel: WebGL context restored — rebuilding scene.')
-      onRestored()
-    }
-
-    canvas.addEventListener('webglcontextlost', handleLost)
-    canvas.addEventListener('webglcontextrestored', handleRestored)
-
-    return () => {
-      canvas.removeEventListener('webglcontextlost', handleLost)
-      canvas.removeEventListener('webglcontextrestored', handleRestored)
-      // Deliberately NOT losing the context here. Fiber's own root teardown
-      // already calls forceContextLoss() when the Canvas unmounts; losing it
-      // a first time from this cleanup meant the context died twice — once
-      // here, once from the delayed teardown that then disposed a dead
-      // context — which poisoned the GPU channel so badly that every canvas
-      // created afterwards failed to initialise and the tab eventually hung
-      // in a native getContext call. One release, owned by fiber, is enough.
-      // This never showed while the race was the only game: a channel that
-      // is never unmounted never runs this cleanup.
-    }
-  }, [gl, onRestored])
-
+  })
   return null
 }
 
@@ -411,6 +566,9 @@ function ResolutionLock({ height }: { height: number }): null {
   const applied = useRef(0)
 
   useFrame(({ gl, size, camera }) => {
+    if (process.env.NODE_ENV !== 'production') {
+      ;(globalThis as typeof globalThis & { raceCamera?: THREE.Camera }).raceCamera = camera
+    }
     const aspect = size.width / size.height
     const targetWidth = Math.round(height * aspect)
     if (applied.current === targetWidth) return

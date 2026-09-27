@@ -34,6 +34,15 @@ const VERTEX_SHADER = /* glsl */ `
   uniform vec3 uLightDirection;
   uniform float uAmbient;
   /**
+   * One point light, per vertex, for a room lit by a lamp rather than a sky.
+   * Radius 0 is off, which is every channel but the bedroom: a circuit is lit
+   * by its sun and its fog and has no use for a lamp. Quadratic falloff to
+   * the radius, clamped — the era's lights had no physics, only a distance.
+   */
+  uniform vec3 uLampPosition;
+  uniform vec3 uLampColor;
+  uniform float uLampRadius;
+  /**
    * Texels per world unit for a surface with no UVs of its own; 0 reads the
    * mesh's UV attribute as ever. A source model's untextured geometry — the
    * rips' backdrop mountains, a marketplace track's barriers — ships no
@@ -43,6 +52,11 @@ const VERTEX_SHADER = /* glsl */ `
    * the artefact the era's own auto-mapped cliffs wore.
    */
   uniform float uWorldUvScale;
+
+  // Skinning, for the fighters. Three's own chunks, which compile to nothing
+  // unless the mesh being drawn is a SkinnedMesh — the renderer sets
+  // USE_SKINNING per object, so the cars and the circuits pay nothing.
+  #include <skinning_pars_vertex>
 
   // Two copies of everything that crosses a triangle: one premultiplied by w
   // so the hardware's perspective correction cancels out, one left alone. The
@@ -62,8 +76,15 @@ const VERTEX_SHADER = /* glsl */ `
   varying vec3 vLocal;
 
   void main() {
+    // Bind-space position, before any bones move it. The liveries read this
+    // one, so a pattern on a fighter's gi stays on the gi as the arm swings.
     vLocal = position;
-    vec4 viewPosition = modelViewMatrix * vec4(position, 1.0);
+    vec3 transformed = position;
+    vec3 objectNormal = normal;
+    #include <skinbase_vertex>
+    #include <skinnormal_vertex>
+    #include <skinning_vertex>
+    vec4 viewPosition = modelViewMatrix * vec4(transformed, 1.0);
     vec4 clipPosition = projectionMatrix * viewPosition;
 
     // World-projected UVs for geometry that has none. The dominant axis of
@@ -71,13 +92,13 @@ const VERTEX_SHADER = /* glsl */ `
     // and their tops both receive the texture square-on rather than smeared.
     vec2 mappedUv = uv;
     if (uWorldUvScale > 0.0) {
-      vec3 worldPosition = (modelMatrix * vec4(position, 1.0)).xyz;
+      vec3 worldPosition = (modelMatrix * vec4(transformed, 1.0)).xyz;
       // The rotation part of the model matrix, column by column. GLSL ES
       // 1.00 — which is what a ShaderMaterial compiles as — has no
       // matrix-from-matrix constructor, and mat3(modelMatrix) written here
       // failed to compile, taking every surface in the scene down with it.
       mat3 modelRotation = mat3(modelMatrix[0].xyz, modelMatrix[1].xyz, modelMatrix[2].xyz);
-      vec3 axis = abs(modelRotation * normal);
+      vec3 axis = abs(modelRotation * objectNormal);
       if (axis.y >= axis.x && axis.y >= axis.z) {
         mappedUv = worldPosition.xz;
       } else if (axis.x >= axis.z) {
@@ -98,9 +119,23 @@ const VERTEX_SHADER = /* glsl */ `
 
     // Gouraud: one lighting evaluation per vertex, interpolated across the
     // face. No normal maps, no specular, no per-pixel work.
-    vec3 worldNormal = normalize(normalMatrix * normal);
+    vec3 worldNormal = normalize(normalMatrix * objectNormal);
     float lambert = max(dot(worldNormal, normalize(uLightDirection)), 0.0);
     vec3 shade = vec3(uAmbient + lambert * (1.0 - uAmbient));
+
+    if (uLampRadius > 0.0) {
+      vec3 lampAt = (modelMatrix * vec4(transformed, 1.0)).xyz;
+      vec3 toLamp = uLampPosition - lampAt;
+      float falloff = clamp(1.0 - length(toLamp) / uLampRadius, 0.0, 1.0);
+      falloff *= falloff;
+      // A true world normal, not the view-space one above: the lamp does not
+      // move with the camera.
+      mat3 lampRotation = mat3(modelMatrix[0].xyz, modelMatrix[1].xyz, modelMatrix[2].xyz);
+      vec3 lampNormal = normalize(lampRotation * objectNormal);
+      // A floor of facing so the back of a chair still catches the bounce.
+      float facing = max(dot(lampNormal, normalize(toLamp)), 0.2);
+      shade += uLampColor * falloff * facing;
+    }
 
     // Affine interpolation — the warping texture, and the second most
     // recognisable artefact of the era after the wobble.
@@ -158,6 +193,13 @@ const FRAGMENT_SHADER = /* glsl */ `
   uniform vec3 uBodySize;
   /** How far the page is repainted in uPaint, 0..1. */
   uniform float uPaintMix;
+  /**
+   * 1 confines the respray to the body box. A car's body is its own
+   * material and takes the paint everywhere; a fighter is one page from
+   * boots to hair, and a respray that reached the face would turn the
+   * whole roster cyan. The box is the gi.
+   */
+  uniform float uPaintClip;
 
   varying vec3 vColor;
   varying float vFogDepth;
@@ -283,7 +325,9 @@ const FRAGMENT_SHADER = /* glsl */ `
     // hue from the driver. Which is what a respray is.
     float luma = dot(sampled, vec3(0.299, 0.587, 0.114));
     vec3 repainted = uPaint * clamp(luma * 1.7, 0.0, 1.35);
-    sampled = mix(sampled, repainted, uPaintMix);
+    vec3 boxed = (vLocal - uBodyMin) / max(uBodySize, vec3(0.0001));
+    float insideBox = step(0.0, boxed.x) * step(boxed.x, 1.0) * step(0.0, boxed.y) * step(boxed.y, 1.0) * step(0.0, boxed.z) * step(boxed.z, 1.0);
+    sampled = mix(sampled, repainted, uPaintMix * mix(1.0, insideBox, uPaintClip));
     vec3 base = mix(uColor, sampled, uUseMap);
 
     // The livery goes on over the paint and under the lighting, which is
@@ -329,7 +373,19 @@ const FRAGMENT_SHADER = /* glsl */ `
   }
 `
 
+/** A lamp in the room. See the vertex shader. */
+export interface Ps1Lamp {
+  readonly position: THREE.Vector3
+  readonly color: THREE.ColorRepresentation
+  /** Multiplies the colour; over 1 pushes the near side past white, which reads as a bulb. */
+  readonly intensity: number
+  /** World units to the edge of its reach. */
+  readonly radius: number
+}
+
 export interface Ps1MaterialOptions {
+  /** The one point light. Absent means unlit by it, which is every channel but the room. */
+  readonly lamp?: Ps1Lamp
   readonly color: THREE.ColorRepresentation
   readonly fogColor?: THREE.ColorRepresentation
   readonly fogNear?: number
@@ -386,6 +442,12 @@ export interface Ps1MaterialOptions {
      * starts and where it stays until someone opens the paint shop.
      */
     readonly paintStrength?: number
+    /**
+     * Keep the respray inside `bounds` rather than over the whole surface.
+     * For a character drawn as a single page, where the box is the costume
+     * and the rest is skin.
+     */
+    readonly clipPaint?: boolean
   }
 }
 
@@ -486,6 +548,23 @@ export function setFogColor(color: THREE.ColorRepresentation): void {
   sharedFogColor.value.set(color)
 }
 
+/**
+ * The material a mesh arrived with, however many times it has since been
+ * redressed. Every model applier reads the source page off the mesh and hangs
+ * a console material in its place — and React's StrictMode runs a memo twice
+ * in development, so the second pass would find the shader material the first
+ * pass left there, read no page off it, and dress the whole model in flat
+ * plaster. The first sight of a mesh is remembered here and served after.
+ */
+const sourceMaterials = new WeakMap<THREE.Mesh, THREE.Material | null>()
+export function sourceMaterialOf(mesh: THREE.Mesh): THREE.Material | null {
+  const seen = sourceMaterials.get(mesh)
+  if (seen !== undefined) return seen
+  const current = Array.isArray(mesh.material) ? (mesh.material[0] ?? null) : mesh.material
+  sourceMaterials.set(mesh, current)
+  return current
+}
+
 export function createPs1Material(options: Ps1MaterialOptions): THREE.ShaderMaterial {
   return new THREE.ShaderMaterial({
     vertexShader: VERTEX_SHADER,
@@ -519,6 +598,7 @@ export function createPs1Material(options: Ps1MaterialOptions): THREE.ShaderMate
       uColorLevels: sharedColorLevels,
       uLivery: { value: options.livery?.pattern ?? 0 },
       uPaintMix: { value: options.livery?.paintStrength ?? 0 },
+      uPaintClip: { value: options.livery?.clipPaint ? 1 : 0 },
       uPaint: { value: new THREE.Color(options.livery?.paint ?? '#ffffff') },
       uBodyMin: {
         value: options.livery ? options.livery.bounds.min.clone() : new THREE.Vector3(0, 0, 0),
@@ -529,6 +609,11 @@ export function createPs1Material(options: Ps1MaterialOptions): THREE.ShaderMate
           : new THREE.Vector3(1, 1, 1),
       },
       uAmbient: { value: options.ambient ?? DEFAULT_AMBIENT },
+      uLampPosition: { value: options.lamp ? options.lamp.position.clone() : new THREE.Vector3() },
+      uLampColor: {
+        value: options.lamp ? new THREE.Color(options.lamp.color).multiplyScalar(options.lamp.intensity) : new THREE.Color(0, 0, 0),
+      },
+      uLampRadius: { value: options.lamp?.radius ?? 0 },
       uWorldUvScale: { value: options.worldUvScale ?? 0 },
       uLightDirection: { value: new THREE.Vector3(0.4, 1, 0.25).normalize() },
     },

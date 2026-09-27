@@ -6,7 +6,14 @@ import { useGLTF } from '@react-three/drei'
 import * as THREE from 'three'
 import { createPs1Material, configurePs1Texture } from './Ps1Material'
 import { useCircuit } from './CircuitContext'
-import { ROAD_CLEARANCE, type Circuit, type RoadCorridor } from './circuit'
+import { ROAD_CLEARANCE, type Circuit } from './circuit'
+import {
+  corridorFromWalls,
+  describeBoundaries,
+  MAX_CORRIDOR_SHIFT,
+  type RoadCorridor,
+  type TrackBoundaries,
+} from './corridor'
 import { buildGroundField } from './groundField'
 import { buildBarrierField, type BarrierField } from './barrierField'
 import type { TrackDefinition, TrackSurface } from './tracks/types'
@@ -234,12 +241,27 @@ function SplineGrounding({ model }: { readonly model: THREE.Object3D }): null {
     // The width, now that the heights are in. Deliberately after the height
     // field is published rather than before: the corridor's rays are fired at
     // road level, and road level is the thing that was just measured.
-    circuit.setCorridor(measureCorridor(circuit, buildBarrierField(model)))
+    // Kept rather than discarded once the corridor is measured: the camera
+    // asks the same triangles whether anything stands between it and the car
+    // it is filming, which is how a shot follows a car into a tunnel instead
+    // of sitting in the hillside above it.
+    const walls = buildBarrierField(model)
+    circuit.setBarriers(walls)
+    // Measured here only when the circuit did not arrive already knowing.
+    // A baked track carries its boundaries in its own JSON now — see
+    // scripts/bakeCorridor.mjs — measured offline against this same model, by
+    // the same rays, but with the time to iterate and with a person able to
+    // look at the result. This stays for anything baked before that existed,
+    // and as the check on it.
+    if (!circuit.hasBakedCorridor()) {
+      circuit.setCorridor(measureCorridor(circuit, walls))
+    }
 
     return () => {
       circuit.setHeightField(null)
       circuit.setCorridor(null)
       circuit.setGround(null)
+      circuit.setBarriers(null)
     }
   }, [model, circuit])
 
@@ -309,30 +331,6 @@ const CORRIDOR_SAMPLES = 192
  * of the two answers wins.
  */
 const CORRIDOR_PROBE_HEIGHTS: ReadonlyArray<number> = [0.4, 1.05]
-/**
- * How far a car is kept off a measured wall, in game units. A car is 1.7
- * across in the simulation's own contact box, so this is its shoulder plus a
- * little air — enough that a scrape reads as a scrape rather than as a body
- * halfway through a fence.
- */
-const BARRIER_CLEARANCE = 1.15
-/**
- * Narrowest the corridor may get. A gate, a tunnel mouth or a stray triangle
- * can measure narrower than a car, and a corridor narrower than a car is a
- * field of cars pinned to one line.
- */
-const MIN_CORRIDOR_HALF = 1.8
-/**
- * How far the corridor's centre may be moved off the traced line, as a
- * fraction of the nominal half width.
- *
- * The shift is the correction for a trace that runs closer to one barrier
- * than the other, and it is capped because it can only ever be a correction.
- * A trace that has left the road entirely wants re-drawing, not nudging —
- * and letting this pull cars an unbounded distance sideways would hide that
- * rather than show it.
- */
-const MAX_CORRIDOR_SHIFT = 0.8
 /** How far past the nominal width the rays look for a wall. */
 const CORRIDOR_PROBE_REACH = 1.9
 
@@ -353,9 +351,8 @@ function measureCorridor(circuit: Circuit, barriers: BarrierField): RoadCorridor
 
   const nominal = circuit.halfWidth
   const reach = nominal * CORRIDOR_PROBE_REACH
-  const maxShift = nominal * MAX_CORRIDOR_SHIFT
-  const centre = new Float32Array(CORRIDOR_SAMPLES)
-  const halfWidth = new Float32Array(CORRIDOR_SAMPLES)
+  const left: Array<number | null> = new Array(CORRIDOR_SAMPLES).fill(null)
+  const right: Array<number | null> = new Array(CORRIDOR_SAMPLES).fill(null)
   const point = new THREE.Vector3()
   const tangent = new THREE.Vector3()
   const normal = new THREE.Vector3()
@@ -383,27 +380,32 @@ function measureCorridor(circuit: Circuit, barriers: BarrierField): RoadCorridor
     // the wrong side of the road.
     normal.crossVectors(UP, tangent).normalize()
 
-    const right = nearestWall(1)
-    const left = nearestWall(-1)
-
-    // Limits as signed offsets from the traced line. An unfound wall leaves
-    // the nominal width standing on that side.
-    const rightLimit = Number.isFinite(right)
-      ? Math.min(nominal, Math.max(-maxShift, right - BARRIER_CLEARANCE))
-      : nominal
-    const leftLimit = Number.isFinite(left)
-      ? Math.max(-nominal, Math.min(maxShift, -(left - BARRIER_CLEARANCE)))
-      : -nominal
-
-    const measuredCentre = (rightLimit + leftLimit) / 2
-    const measuredHalf = (rightLimit - leftLimit) / 2
-    centre[row] = Math.max(-maxShift, Math.min(maxShift, measuredCentre))
-    halfWidth[row] = Math.max(MIN_CORRIDOR_HALF, measuredHalf)
+    // Raw wall offsets, in the circuit's own lateral convention: positive to
+    // the right of the line, negative to the left, null where the ray reached
+    // its limit without touching anything. Clearance, caps and smoothing are
+    // corridor.ts's business — see the note there on keeping the measurement
+    // and the simulation's use of it apart.
+    const rightHit = nearestWall(1)
+    const leftHit = nearestWall(-1)
+    if (Number.isFinite(rightHit)) right[row] = rightHit
+    if (Number.isFinite(leftHit)) left[row] = -leftHit
   }
 
-  smoothCorridor(centre, halfWidth)
-  reportCorridor(circuit, centre, halfWidth)
-  return { samples: CORRIDOR_SAMPLES, centre, halfWidth }
+  const boundaries: TrackBoundaries = {
+    samples: CORRIDOR_SAMPLES,
+    probeHeights: CORRIDOR_PROBE_HEIGHTS,
+    left,
+    right,
+  }
+  console.info(
+    `${circuit.definition.slug}: boundaries measured in the browser — ` +
+      `${describeBoundaries(boundaries, nominal)}. ` +
+      'Bake them instead: node scripts/bakeCorridor.mjs --slug ' +
+      `${circuit.definition.slug}`,
+  )
+  const corridor = corridorFromWalls(boundaries, nominal)
+  reportCorridor(circuit, corridor.centre, corridor.halfWidth)
+  return corridor
 }
 
 /**
@@ -447,36 +449,6 @@ function reportCorridor(circuit: Circuit, centre: Float32Array, halfWidth: Float
         'barriers, but the line itself wants re-tracing — see scripts/bakeTrack.mjs.',
     )
   }
-}
-
-/**
- * Takes the measurement noise out.
- *
- * The width runs through a three-tap *minimum* before it is averaged, because
- * the two errors here are not symmetrical: a ray that missed a rail through
- * a gap in it reports the road as wider than it is, and one over-wide sample
- * is a car put through a barrier. Averaging alone would spread that error
- * over its neighbours rather than remove it. The centre is only averaged —
- * there is no safe side to a mis-centred corridor, and a smooth line is what
- * stops the field being nudged sideways sample by sample.
- */
-function smoothCorridor(centre: Float32Array, halfWidth: Float32Array): void {
-  const samples = centre.length
-  const narrowed = new Float32Array(samples)
-  for (let row = 0; row < samples; row++) {
-    const before = halfWidth[(row - 1 + samples) % samples]
-    const after = halfWidth[(row + 1) % samples]
-    narrowed[row] = Math.min(halfWidth[row], before, after)
-  }
-
-  const smoothedCentre = new Float32Array(samples)
-  for (let row = 0; row < samples; row++) {
-    const previous = (row - 1 + samples) % samples
-    const next = (row + 1) % samples
-    smoothedCentre[row] = (centre[previous] + centre[row] + centre[next]) / 3
-    halfWidth[row] = (narrowed[previous] + narrowed[row] + narrowed[next]) / 3
-  }
-  centre.set(smoothedCentre)
 }
 
 /**
@@ -624,6 +596,19 @@ function applyTrackSurfaces(
 
     child.material = material
   })
+
+  // Development only: the built materials on the window, so a browser
+  // session can read what each surface was given. Never in production.
+  if (process.env.NODE_ENV !== 'production') {
+    const scope = globalThis as typeof globalThis & {
+      trackMaterials?: ReadonlyArray<THREE.Material>
+      trackRoot?: THREE.Object3D
+      THREE?: typeof THREE
+    }
+    scope.trackMaterials = created
+    scope.trackRoot = root
+    scope.THREE = THREE
+  }
 
   return created
 }

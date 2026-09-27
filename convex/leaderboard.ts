@@ -64,6 +64,15 @@ export const get = query({
         // actually customised, not just the one the race is running.
         paint: user.paint ?? null,
         livery: user.livery ?? null,
+        chassis: user.chassis ?? null,
+        // And the hangar's and the dojo's, for the same reason: the board
+        // draws whichever rig the game on screen runs.
+        airframe: user.airframe ?? null,
+        planePaint: user.planePaint ?? null,
+        planeLivery: user.planeLivery ?? null,
+        fighter: user.fighter ?? null,
+        fightPaint: user.fightPaint ?? null,
+        fightLivery: user.fightLivery ?? null,
       }))
 
     const totalTokens = sorted.reduce((s, e) => s + e.totalTokens, 0)
@@ -75,6 +84,13 @@ export const get = query({
     }
   },
 })
+
+/** Generates a 32-byte hex string suitable for use as a per-device link token. */
+function generateLinkToken(): string {
+  const bytes = new Uint8Array(32)
+  crypto.getRandomValues(bytes)
+  return Array.from(bytes, (b) => b.toString(16).padStart(2, "0")).join("")
+}
 
 export const upsertDevice = internalMutation({
   args: {
@@ -91,7 +107,7 @@ export const upsertDevice = internalMutation({
     sessionCount: v.number(),
     lastSeen: v.string(),
   },
-  handler: async (ctx, args) => {
+  handler: async (ctx, args): Promise<{ linkToken: string }> => {
     const existingDevice = await ctx.db
       .query("devices")
       .withIndex("by_userKey_deviceId", (q) =>
@@ -99,9 +115,14 @@ export const upsertDevice = internalMutation({
       )
       .unique()
 
+    // Generate a token once per device and keep it forever. Existing devices
+    // that pre-date this field get one assigned on their next report.
+    const linkToken = existingDevice?.linkToken ?? generateLinkToken()
+
     const deviceFields = {
       userKey: args.userKey,
       deviceId: args.deviceId,
+      linkToken,
       totalTokens: args.totalTokens,
       inputTokens: args.inputTokens,
       outputTokens: args.outputTokens,
@@ -247,6 +268,8 @@ export const upsertDevice = internalMutation({
     } else {
       await ctx.db.insert("meta", { key: "updatedAt", value: nowIso })
     }
+
+    return { linkToken }
   },
 })
 

@@ -1,6 +1,7 @@
 import { httpRouter } from "convex/server"
 import { httpAction } from "./_generated/server"
 import { internal } from "./_generated/api"
+import { auth } from "./auth"
 
 const MAX_MODEL_KEYS = 64
 const MAX_MODEL_KEY_LENGTH = 128
@@ -65,6 +66,75 @@ function parseSessions(raw: unknown): ParsedSession[] {
 
 const http = httpRouter()
 
+// Convex Auth's JWKS and OpenID discovery. No OAuth routes: the only sign-in
+// is the device link, which never leaves this deployment.
+auth.addHttpRoutes(http)
+
+const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
+
+/**
+ * The reporter asking for a sign-in code on its owner's behalf.
+ *
+ * Authentication priority:
+ * 1. Per-device linkToken (issued by /report on first registration). Only the
+ *    machine that registered the device ever receives this token, so it proves
+ *    the caller owns the device without relying on the shared team secret.
+ * 2. Shared secret fallback — accepted only when the device has no linkToken
+ *    yet (i.e. it has not completed its first report). This covers the
+ *    "install and sign in immediately" setup flow. Once a device has reported
+ *    and received a linkToken, the shared secret is no longer accepted for it.
+ */
+http.route({
+  path: "/link",
+  method: "POST",
+  handler: httpAction(async (ctx, request) => {
+    const body = await request.json()
+    const json = (payload: unknown, status: number): Response =>
+      new Response(JSON.stringify(payload), {
+        status,
+        headers: { "Content-Type": "application/json" },
+      })
+
+    const email = typeof body.email === "string" ? body.email.trim().toLowerCase() : ""
+    const deviceId = typeof body.deviceId === "string" ? body.deviceId.trim() : ""
+    const name = typeof body.name === "string" ? body.name.trim() : ""
+    if (!EMAIL_REGEX.test(email)) return json({ error: "A valid email is required" }, 400)
+    if (!deviceId) return json({ error: "Device ID is required" }, 400)
+    if (!name) return json({ error: "Display name is required" }, 400)
+
+    // Check whether a per-device token exists for this (email, deviceId).
+    const storedLinkToken = await ctx.runQuery(internal.deviceLink.getDeviceLinkToken, {
+      userKey: email,
+      deviceId,
+    })
+
+    if (storedLinkToken !== null) {
+      // Device has reported at least once: require the per-device token.
+      const suppliedToken = typeof body.linkToken === "string" ? body.linkToken.trim() : ""
+      if (!suppliedToken || suppliedToken !== storedLinkToken) {
+        return json({ error: "Unauthorized" }, 401)
+      }
+    } else {
+      // Device has never reported: fall back to the shared secret for initial
+      // setup. Once the first /report completes, this path is no longer used.
+      const secret = process.env.LEADERBOARD_SECRET
+      if (!secret || body.secret !== secret) return json({ error: "Unauthorized" }, 401)
+    }
+
+    const { code, expiresAt } = await ctx.runMutation(internal.deviceLink.createLoginCode, {
+      userKey: email,
+      deviceId,
+      name,
+    })
+
+    // Where the browser should go. SITE_URL is set on the deployment by the
+    // Convex Auth initialiser; without it the code still works typed in.
+    const siteUrl = (process.env.SITE_URL ?? "").replace(/\/$/, "")
+    const url = siteUrl ? `${siteUrl}/login?code=${code}` : null
+    return json({ code, url, expiresAt }, 200)
+  }),
+})
+
 http.route({
   path: "/report",
   method: "POST",
@@ -118,7 +188,7 @@ http.route({
         ? body.color
         : undefined
 
-    await ctx.runMutation(internal.leaderboard.upsertDevice, {
+    const { linkToken } = await ctx.runMutation(internal.leaderboard.upsertDevice, {
       userKey: email.toLowerCase(),
       deviceId,
       name,
@@ -132,6 +202,14 @@ http.route({
       sessionCount: body.sessionCount ?? 0,
       lastSeen: new Date().toISOString(),
     })
+
+    // v5 reporters know which Claude account is signed in on the machine.
+    if (typeof body.claudeAccountId === "string" && body.claudeAccountId.trim()) {
+      await ctx.runMutation(internal.deviceLink.attachClaudeAccount, {
+        userKey: email.toLowerCase(),
+        claudeAccountId: body.claudeAccountId.trim(),
+      })
+    }
 
     // v4 detail. Absent for older reporters, which keep working exactly as
     // before — they simply generate no bucket data and race at a flat pace.
@@ -148,7 +226,9 @@ http.route({
       })
     }
 
-    return new Response(JSON.stringify({ ok: true }), {
+    // Return the per-device linkToken so the reporter can save it and use it
+    // for future /link calls instead of the shared team secret.
+    return new Response(JSON.stringify({ ok: true, linkToken }), {
       status: 200,
       headers: { "Content-Type": "application/json" },
     })

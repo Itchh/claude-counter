@@ -14,6 +14,7 @@ function eventColor(event: LeaderboardEvent): string {
   if (event.color) return event.color
   if (event.type === 'new_leader') return PS1.hot
   if (event.type === 'milestone') return PS1.cyan
+  if (event.type === 'control_taken' || event.type === 'hot_lap') return PS1.gold
   return PS1.textDim
 }
 

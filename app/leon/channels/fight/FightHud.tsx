@@ -23,6 +23,14 @@ const ANNOUNCE_RAMP =
 const BAR_HEIGHT = 20
 const BAR_SKEW_DEG = 8
 
+/**
+ * How far down the FREE PLAY ident has to start to clear the cabinet's corner
+ * buttons: their 48px height plus a gap, measured from the top of this strip,
+ * which starts on the same line the buttons do. Both layers carry the same
+ * HUD zoom, so these are the same pixels.
+ */
+const CORNER_CHROME_HEIGHT_PX = 58
+
 export interface HudFighter {
   readonly key: string
   readonly name: string
@@ -43,6 +51,8 @@ export interface HudSnapshot {
   readonly winnerName: string | null
   readonly nextPair: string | null
   readonly stageNumber: number
+  /** The venue's name, as the stage registry prints it. */
+  readonly stageTitle: string
   /** Wall-clock ms the crit flash burns until. The scene expires it itself. */
   readonly critFlashUntil: number
   readonly events: ReadonlyArray<FightEventLine>
@@ -51,6 +61,8 @@ export interface HudSnapshot {
 interface FightHudProps {
   readonly snapshot: HudSnapshot | null
   readonly paused: boolean
+  /** Opens a fighter's dojo. The name plates are the only way in. */
+  readonly onOpenDojo: (fighterKey: string) => void
 }
 
 /** The centre card for the moment: the genre announces everything. */
@@ -74,9 +86,11 @@ function announcement(snapshot: HudSnapshot): string | null {
 function HealthBar({
   fighter,
   side,
+  onOpen,
 }: {
   readonly fighter: HudFighter
   readonly side: 'left' | 'right'
+  readonly onOpen: () => void
 }): React.ReactElement {
   const mirror = side === 'right'
   const skew = mirror ? BAR_SKEW_DEG : -BAR_SKEW_DEG
@@ -127,9 +141,19 @@ function HealthBar({
           flexDirection: mirror ? 'row-reverse' : 'row',
         }}
       >
-        <span
+        {/* The one thing on the HUD that takes the pointer: a name plate
+            is the way into the dojo, exactly as the race's tower row is the
+            way into the paint shop. */}
+        <button
+          type="button"
+          onClick={onOpen}
+          title={`Dojo — ${fighter.name}`}
           className="gt-label"
           style={{
+            pointerEvents: 'auto',
+            cursor: 'pointer',
+            border: 'none',
+            font: 'inherit',
             fontFamily: FONTS.hud,
             fontSize: `${PS1_TYPE.body}px`,
             color: ARCADE.value,
@@ -141,7 +165,7 @@ function HealthBar({
           }}
         >
           {fighter.name}
-        </span>
+        </button>
         {/* Round tallies: the day's KOs, the genre's little win pips. */}
         <span style={{ display: 'flex', gap: '4px' }}>
           {Array.from({ length: Math.min(5, fighter.wins) }, (_, index) => (
@@ -161,7 +185,7 @@ function HealthBar({
   )
 }
 
-export function FightHud({ snapshot, paused }: FightHudProps): React.ReactElement {
+export function FightHud({ snapshot, paused, onOpenDojo }: FightHudProps): React.ReactElement {
   const card = snapshot ? announcement(snapshot) : null
   const showVs = snapshot?.phase === 'intro' && snapshot.left && snapshot.right
 
@@ -195,22 +219,33 @@ export function FightHud({ snapshot, paused }: FightHudProps): React.ReactElemen
             }}
           >
             Stage {snapshot?.stageNumber ?? 1}
-          </span>
-          <span
-            className="gt-label"
-            style={{
-              fontSize: `${PS1_TYPE.label}px`,
-              color: GT.label,
-              ...INK_SMALL,
-            }}
-          >
-            Free play
+            {snapshot?.stageTitle ? (
+              <span style={{ color: GT.valueDim }}> · {snapshot.stageTitle}</span>
+            ) : null}
           </span>
         </div>
 
+        {/* FREE PLAY belongs in the top-right corner, and so do the cabinet's
+            own Leaderboard / Account / Menu buttons — which are drawn over
+            this layer, at the same scale. So the ident hangs below them
+            rather than under them. */}
+        <span
+          className="gt-label"
+          style={{
+            position: 'absolute',
+            top: `${CORNER_CHROME_HEIGHT_PX}px`,
+            right: 0,
+            fontSize: `${PS1_TYPE.label}px`,
+            color: GT.label,
+            ...INK_SMALL,
+          }}
+        >
+          Free play
+        </span>
+
         <div style={{ display: 'flex', alignItems: 'flex-start', gap: '18px' }}>
           {snapshot?.left ? (
-            <HealthBar fighter={snapshot.left} side="left" />
+            <HealthBar fighter={snapshot.left} side="left" onOpen={() => onOpenDojo(snapshot.left?.key ?? '')} />
           ) : (
             <div style={{ flex: 1 }} />
           )}
@@ -231,7 +266,7 @@ export function FightHud({ snapshot, paused }: FightHudProps): React.ReactElemen
           </span>
 
           {snapshot?.right ? (
-            <HealthBar fighter={snapshot.right} side="right" />
+            <HealthBar fighter={snapshot.right} side="right" onOpen={() => onOpenDojo(snapshot.right?.key ?? '')} />
           ) : (
             <div style={{ flex: 1 }} />
           )}

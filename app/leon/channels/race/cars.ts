@@ -1,4 +1,5 @@
 import * as THREE from 'three'
+import { CHASSIS_COUNT } from '@/lib/livery'
 
 // The grid. Eight low-poly cars from GGBot's PSX pack, one per driver, each
 // with its own livery — see public/ps1/cars/CREDITS.txt.
@@ -17,7 +18,7 @@ export interface CarModel {
   readonly textureUrl: string
 }
 
-export const CAR_MODELS: ReadonlyArray<CarModel> = Array.from({ length: 8 }, (_, index) => ({
+export const CAR_MODELS: ReadonlyArray<CarModel> = Array.from({ length: CHASSIS_COUNT }, (_, index) => ({
   objUrl: `/ps1/cars/car${index + 1}.obj`,
   textureUrl: `/ps1/cars/car${index + 1}.png`,
 }))
@@ -42,6 +43,19 @@ export function chassisFor(key: string): number {
     hash = Math.imul(hash, 0x01000193)
   }
   return (hash >>> 0) % CAR_MODELS.length
+}
+
+/**
+ * The chassis a driver is drawn in: the one they chose on the select screen,
+ * or — until they have — the one their key hashes to. Every surface that
+ * draws a car goes through this, so a choice made in the window lands on the
+ * circuit, the podium and the standings in the same subscription tick.
+ */
+export function chassisOf(key: string, chosen: number | null | undefined): number {
+  if (chosen !== null && chosen !== undefined && Number.isInteger(chosen) && chosen >= 0 && chosen < CAR_MODELS.length) {
+    return chosen
+  }
+  return chassisFor(key)
 }
 
 export function carModelFor(index: number): CarModel {

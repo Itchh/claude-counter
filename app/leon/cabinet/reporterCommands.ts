@@ -20,10 +20,24 @@ export interface ReporterCommand {
 
 export const REPORTER_COMMANDS: ReadonlyArray<ReporterCommand> = [
   {
+    id: 'identity',
+    label: 'Before you start',
+    hint: 'Your git email is your identity on the board — it is what merges your count across machines. Set it once if it is not already.',
+    command: 'git config --global user.email "you@example.com"',
+    tone: 'neutral',
+  },
+  {
     id: 'install',
     label: 'Install',
-    hint: 'macOS. Installs the background agent and enters you on the board. Safe to re-run — this is also how you update.',
+    hint: 'macOS only. Installs bun if missing, then the background agent, and enters you on the board. Safe to re-run — this is also how you update.',
     command: `curl -fsSL ${REPO_RAW_BASE}/install.sh | bash`,
+    tone: 'go',
+  },
+  {
+    id: 'login',
+    label: 'Sign in',
+    hint: 'Prints a one-time code and opens the sign-in page. The reporter vouches for you; there is no password.',
+    command: `cd ${REPORTER_DIR} && bun login`,
     tone: 'go',
   },
   {

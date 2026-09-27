@@ -1,46 +1,106 @@
 'use client'
 
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Canvas, useFrame, useThree } from '@react-three/fiber'
-import { useQuery } from 'convex/react'
+import { useGLTF } from '@react-three/drei'
+import { useCachedQuery } from '@/lib/useCachedQuery'
 import * as THREE from 'three'
+import { ContextGuard } from '../../ps1/ContextGuard'
 import { api } from '../../../../convex/_generated/api'
 import { createPs1Material, setJitterAspect } from '../race/Ps1Material'
-import { Fighter } from './Fighter'
+import { Fighter, preloadFighters, type FighterAir } from './Fighter'
 import { FightHud, type HudSnapshot } from './FightHud'
-import {
-  ARENA_FLOOR_SIZE,
-  ARENA_FOG_FAR,
-  ARENA_FOG_NEAR,
-  ARENA_INTERNAL_HEIGHT,
-  ARENA_SKY,
-} from './arena'
-import { useFightSim, type SimFighter, type SparkEvent } from './useFightSim'
+import { DojoLayer, type DojoFighter } from './Dojo'
+import { useMe } from '../../control/useMe'
+import { fillRoster } from '@/lib/cpuRoster'
+import { StageModel } from './Stage'
+import { fighterOf } from './fighters'
+import { ARENA_FLOOR_SIZE, ARENA_INTERNAL_HEIGHT } from './arena'
+import { ringFloorAt, stageFloorAt, stageModelUrls, type StageDefinition, type StageSky } from './stages'
+import { makeStoneTexture } from './stoneTexture'
+import { STANCE_X, useFightSim, type SimFighter, type SparkEvent } from './useFightSim'
 import { PS1 } from '../../ps1/theme'
 import type { FightChannelProps } from './FightChannel'
 
 // CH 02: the fighting game. Two teammates, health from the day's standing,
 // offence from the live burn — see useFightSim for the rules. This file is
-// only the venue and the wiring: arena, camera, sparks, HUD refresh.
+// only the venue and the wiring: stage, camera, sparks, HUD refresh, and
+// the dojo window over the top.
+//
+// The venue is the one thing here that changes between bouts. The
+// simulation names a stage per bout; the scene reads it on the HUD tick and
+// swaps the model, the sky and every material's fog in one commit, so the
+// fighters walk out somewhere new each time the card goes up.
+//
+// The venue also sets the scale. The simulation fights in fighter units
+// and the scanned stages are large, so the two fighters and their sparks
+// sit in one group scaled by the stage's fighterScale, and the camera's
+// distances are multiplied by the same number: the shot is the same shot
+// on every stage, framed on the fighters, and it is the hall behind them
+// that reads as big or small. The stage model itself is never scaled —
+// its line was measured at its own size.
 
 const HUD_REFRESH_MS = 150
 
-
-/** Camera: the genre's one shot — side-on, waist height, dollying with gap. */
+/**
+ * Camera: the genre's one shot — side-on, waist height, dollying with gap.
+ * All in fighter units; the stage's fighterScale is applied when the camera
+ * is placed, so these are distances from a 1.83-tall body whatever the venue.
+ */
 const CAMERA_HEIGHT = 1.45
 const CAMERA_LOOK_HEIGHT = 1.0
-const CAMERA_DISTANCE_BASE = 4.4
+const CAMERA_DISTANCE_BASE = 3.5
+/** The scene's own field of view; a venue may widen it (see StageCamera). */
+const CAMERA_FOV = 46
 const CAMERA_DISTANCE_PER_GAP = 0.85
+/** The gap the dolly starts pulling back from, in fighter units. */
+const CAMERA_GAP_REST = 2.4
 /** KO push-in: closer, lower, slower — the era's slow-motion tell. */
 const KO_DISTANCE = 3.1
+/** Names on a card before the machine fills the other corner. */
+const MIN_FIGHT_CARD = 2
 const KO_HEIGHT = 0.9
+/** The intro's swing around the pair: how wide, and how long it takes to settle. */
+/**
+ * In fighter units, scaled with the ring: at 2.2 the swing's far end pushed
+ * the left fighter out of frame on the largest stages once the pair stood
+ * 1.6 times taller. 1.3 keeps both in shot through the walk-on.
+ */
+const INTRO_SWING = 1.3
+const INTRO_SWING_S = 3.2
+/** How quickly the camera settles onto its mark. */
+const CAMERA_EASE = 2.4
+
+// Every sculpt and every venue, warmed the moment the module loads: a
+// bout that has to wait for its fighter to download is a card with nobody
+// under it.
+preloadFighters()
+for (const url of stageModelUrls()) useGLTF.preload(url)
 
 export function FightScene({ isLive, paused = false }: FightChannelProps): React.ReactElement {
-  const running = isLive && !paused
-  const race = useQuery(api.scoring.getRace, { period: 'day' })
-  const sim = useFightSim(race?.racers)
+  const [dojoKey, setDojoKey] = useState<string | null>(null)
+  // The bout holds while the dojo is open, for the same reason the race
+  // holds for the paint shop: the picture behind an open window is there to
+  // be read, not to move on without you.
+  const running = isLive && !paused && dojoKey === null
+  // Today's card, and the month's behind it: a ring that waits for two
+  // people to burn tokens on the same day is dark most mornings, and a dark
+  // ring shows nobody the fighters or the venues. The day's roster wins
+  // whenever it has a bout in it; the month's is the attract mode.
+  const today = useCachedQuery('race:day', api.scoring.getRace, { period: 'day' })
+  const todayHasBout = today !== undefined && today.racers.length >= 2
+  const month = useCachedQuery('race:month', api.scoring.getRace, todayHasBout ? 'skip' : { period: 'month' })
+  const race = todayHasBout ? today : (month ?? today)
+  // And behind the month, the machine: a card that still has one name on it
+  // gets a CPU across the ring. Padded only once the roster has arrived, so
+  // nobody sees a bot walk on and then vanish when the real card lands.
+  const roster = useMemo(() => (race === undefined ? undefined : fillRoster(race.racers, MIN_FIGHT_CARD)), [race])
+  const sim = useFightSim(roster)
   const [contextEpoch, setContextEpoch] = useState(0)
   const [hud, setHud] = useState<HudSnapshot | null>(null)
+  // The stage in React state so the venue swaps as one commit. Read off the
+  // simulation on the HUD tick, never during render.
+  const [stage, setStage] = useState<StageDefinition>(() => sim.state.current.stage)
 
   useEffect(() => {
     if (!running) return
@@ -64,6 +124,7 @@ export function FightScene({ isLive, paused = false }: FightChannelProps): React
         state.winnerKey === null
           ? null
           : (state.fighters?.find((fighter) => fighter.key === state.winnerKey)?.name ?? null)
+      setStage((current) => (current.slug === state.stage.slug ? current : state.stage))
       setHud({
         phase: state.phase,
         phaseT: state.phaseT,
@@ -73,6 +134,7 @@ export function FightScene({ isLive, paused = false }: FightChannelProps): React
         winnerName: winner,
         nextPair: state.nextPair,
         stageNumber: state.stageNumber,
+        stageTitle: state.stage.title,
         critFlashUntil: state.critFlashUntil,
         events: sim.events.current,
       })
@@ -80,9 +142,52 @@ export function FightScene({ isLive, paused = false }: FightChannelProps): React
     return () => clearInterval(id)
   }, [running, sim])
 
+  const air = useMemo<FighterAir>(
+    () => ({ fogColor: stage.sky.mid, fogNear: stage.fog.near, fogFar: stage.fog.far }),
+    [stage],
+  )
+  // The ring floor: fighter units in, fighter units out, for everything
+  // inside the scaled ring group. The camera stands outside it and asks
+  // for the world floor instead.
+  const floorAt = useCallback((x: number): number => ringFloorAt(stage, x), [stage])
+  const isFrozen = useCallback((): boolean => sim.state.current.hitStop > 0, [sim])
+
+  // Only your own fighter opens: setFighterLivery writes to whoever is
+  // signed in, so a dojo opened on someone else would dress you in theirs.
+  const me = useMe()
+  const myKey = me?.key ?? null
+  const handleOpenDojo = useCallback(
+    (fighterKey: string): void => {
+      if (myKey !== null && fighterKey === myKey) setDojoKey(fighterKey)
+    },
+    [myKey],
+  )
+  const handleCloseDojo = useCallback((): void => {
+    setDojoKey(null)
+  }, [])
+
+  // The dojo's owner, from the roster: the fighter as they are drawn now
+  // and the choices behind that.
+  const dojoFighter = useMemo<DojoFighter | null>(() => {
+    if (dojoKey === null) return null
+    const racer = race?.racers.find((candidate) => candidate.key === dojoKey)
+    if (!racer) return null
+    return {
+      key: racer.key,
+      name: racer.name,
+      index: fighterOf(racer.key, racer.fighter),
+      fighter: racer.fighter,
+      color: racer.color ?? PS1.cyan,
+      paint: racer.fightPaint,
+      livery: racer.fightLivery,
+      score: racer.score,
+      velocity: racer.velocityTokensPerMin,
+    }
+  }, [dojoKey, race])
+
   return (
     <div style={{ position: 'relative', height: '100%', width: '100%', background: PS1.void }}>
-      <ArenaSky />
+      <StageSkyBackdrop sky={stage.sky} />
 
       <Canvas
         key={contextEpoch}
@@ -96,9 +201,9 @@ export function FightScene({ isLive, paused = false }: FightChannelProps): React
         flat
         gl={{ antialias: false, powerPreference: 'low-power', alpha: true }}
         camera={{
-          fov: 52,
+          fov: CAMERA_FOV,
           near: 0.3,
-          far: ARENA_FOG_FAR * 1.35,
+          far: 120,
           position: [0, CAMERA_HEIGHT, CAMERA_DISTANCE_BASE],
         }}
         style={{
@@ -110,27 +215,42 @@ export function FightScene({ isLive, paused = false }: FightChannelProps): React
         }}
         resize={{ scroll: false }}
         onCreated={({ gl }) => {
-          gl.setClearColor(new THREE.Color(ARENA_SKY.mid), 0)
+          gl.setClearColor(new THREE.Color(stage.sky.mid), 0)
         }}
       >
-        <ContextGuard onRestored={() => setContextEpoch((epoch) => epoch + 1)} />
+        <ContextGuard label="Fight" onRestored={() => setContextEpoch((epoch) => epoch + 1)} />
         <SimDriver sim={sim} isLive={running} />
         <ResolutionLock height={ARENA_INTERNAL_HEIGHT} />
         <FightCamera sim={sim} />
 
-        <ArenaFloor />
-        <ArenaDressing />
+        {stage.model === null ? (
+          <ForestCourt sky={stage.sky} fogNear={stage.fog.near} fogFar={stage.fog.far} />
+        ) : (
+          <Suspense fallback={null}>
+            <StageModel key={stage.slug} stage={stage} />
+          </Suspense>
+        )}
 
-        <Fighter
-          getFighter={() => sim.state.current.fighters?.[0] ?? null}
-          fallbackColor={PS1.cyan}
-        />
-        <Fighter
-          getFighter={() => sim.state.current.fighters?.[1] ?? null}
-          fallbackColor={PS1.hot}
-        />
+        {/* The ring: everything that lives in fighter units, brought up to
+            the venue's size in one place. */}
+        <group scale={stage.fighterScale} position-z={stage.camera.ringZ}>
+          <Fighter
+            getFighter={() => sim.state.current.fighters?.[0] ?? null}
+            isFrozen={isFrozen}
+            fallbackColor={PS1.cyan}
+            air={air}
+            floorAt={floorAt}
+          />
+          <Fighter
+            getFighter={() => sim.state.current.fighters?.[1] ?? null}
+            isFrozen={isFrozen}
+            fallbackColor={PS1.hot}
+            air={air}
+            floorAt={floorAt}
+          />
 
-        <HitSparks sim={sim} />
+          <HitSparks sim={sim} floorAt={floorAt} />
+        </group>
       </Canvas>
 
       {/* The critical flash: one hard beat of white, then gone. An overlay
@@ -139,7 +259,9 @@ export function FightScene({ isLive, paused = false }: FightChannelProps): React
           snapshot can never leave it burning over the whole picture. */}
       <CritFlash until={hud?.critFlashUntil ?? 0} />
 
-      <FightHud snapshot={hud} paused={paused} />
+      <FightHud snapshot={hud} paused={paused || dojoKey !== null} onOpenDojo={handleOpenDojo} />
+
+      <DojoLayer fighter={dojoFighter} onClose={handleCloseDojo} />
     </div>
   )
 }
@@ -177,8 +299,8 @@ function CritFlash({ until }: { readonly until: number }): React.ReactElement | 
 
 // --- Venue -------------------------------------------------------------------
 
-/** The forest backdrop: painted gradient, no geometry — the era's skybox. */
-function ArenaSky(): React.ReactElement {
+/** The painted backdrop: gradient, no geometry — the era's skybox, per stage. */
+function StageSkyBackdrop({ sky }: { readonly sky: StageSky }): React.ReactElement {
   return (
     <div
       aria-hidden
@@ -187,8 +309,8 @@ function ArenaSky(): React.ReactElement {
         inset: 0,
         zIndex: 0,
         backgroundImage: [
-          `radial-gradient(120% 60% at 50% 74%, ${ARENA_SKY.glow}44 0%, transparent 55%)`,
-          `linear-gradient(to bottom, ${ARENA_SKY.high} 0%, ${ARENA_SKY.mid} 55%, ${ARENA_SKY.horizon} 80%, ${ARENA_SKY.mid} 100%)`,
+          `radial-gradient(120% 60% at 50% 74%, ${sky.glow}44 0%, transparent 55%)`,
+          `linear-gradient(to bottom, ${sky.high} 0%, ${sky.mid} 55%, ${sky.horizon} 80%, ${sky.mid} 100%)`,
         ].join(', '),
         backgroundBlendMode: 'screen, normal',
       }}
@@ -197,7 +319,7 @@ function ArenaSky(): React.ReactElement {
         style={{
           position: 'absolute',
           inset: 0,
-          backgroundImage: `repeating-linear-gradient(0deg, rgba(0,0,0,${ARENA_SKY.dither}) 0 1px, transparent 1px 3px)`,
+          backgroundImage: `repeating-linear-gradient(0deg, rgba(0,0,0,${sky.dither}) 0 1px, transparent 1px 3px)`,
         }}
       />
     </div>
@@ -205,99 +327,43 @@ function ArenaSky(): React.ReactElement {
 }
 
 /**
- * The stone court, drawn rather than shipped: a small canvas of flagstones,
- * nearest-sampled and tiled in world space. Generating it keeps the channel
- * assetless and the page a hard 64 texels square — which is the look.
+ * The original venue: a stone court, a tree line and a shrine, all boxes in
+ * fog. Nothing here is closer than the fog's near plane, so all of it reads
+ * as depth rather than as geometry — exactly the era's set dressing budget.
  */
-function makeStoneTexture(): THREE.CanvasTexture {
-  const size = 64
-  const canvas = document.createElement('canvas')
-  canvas.width = size
-  canvas.height = size
-  const ctx = canvas.getContext('2d')
-  if (ctx) {
-    ctx.fillStyle = '#2a3527'
-    ctx.fillRect(0, 0, size, size)
-    const tiles = 4
-    const tile = size / tiles
-    for (let row = 0; row < tiles; row++) {
-      for (let col = 0; col < tiles; col++) {
-        const jitter = ((row * 7 + col * 13) % 5) - 2
-        const shade = 58 + ((row * 11 + col * 5) % 4) * 7 + jitter
-        ctx.fillStyle = `rgb(${shade - 12}, ${shade}, ${shade - 18})`
-        ctx.fillRect(col * tile + 1, row * tile + 1, tile - 2, tile - 2)
-        // One worn corner per stone, so the grid does not read as graph paper.
-        ctx.fillStyle = 'rgba(0,0,0,0.18)'
-        ctx.fillRect(col * tile + 1, row * tile + tile - 4, tile - 2, 3)
-      }
-    }
-  }
-  const texture = new THREE.CanvasTexture(canvas)
-  texture.magFilter = THREE.NearestFilter
-  texture.minFilter = THREE.NearestMipmapLinearFilter
-  texture.generateMipmaps = true
-  texture.wrapS = THREE.RepeatWrapping
-  texture.wrapT = THREE.RepeatWrapping
-  return texture
-}
-
-function ArenaFloor(): React.ReactElement {
-  const material = useMemo(
-    () =>
-      createPs1Material({
+function ForestCourt({
+  sky,
+  fogNear,
+  fogFar,
+}: {
+  readonly sky: StageSky
+  readonly fogNear: number
+  readonly fogFar: number
+}): React.ReactElement {
+  const fogColor = sky.mid
+  const materials = useMemo(() => {
+    const fog = { fogColor, fogNear, fogFar }
+    return {
+      floor: createPs1Material({
         color: '#ffffff',
         map: makeStoneTexture(),
-        fogColor: ARENA_SKY.mid,
-        fogNear: ARENA_FOG_NEAR,
-        fogFar: ARENA_FOG_FAR,
+        ...fog,
         // Tile every ~2.2 world units, in world space — the plane's own UVs
         // would stretch one page across the whole court.
         worldUvScale: 1 / 2.2,
       }),
-    [],
-  )
-  return (
-    <mesh material={material} rotation={[-Math.PI / 2, 0, 0]} position={[0, 0, 0]}>
-      <planeGeometry args={[ARENA_FLOOR_SIZE, ARENA_FLOOR_SIZE]} />
-    </mesh>
-  )
-}
+      trunk: createPs1Material({ color: '#233521', ...fog }),
+      canopy: createPs1Material({ color: '#1a2c1a', ...fog }),
+      shrine: createPs1Material({ color: '#4a3a2a', ...fog }),
+    }
+  }, [fogColor, fogNear, fogFar])
+  const { floor, trunk, canopy, shrine } = materials
 
-/**
- * The tree line and the shrine: boxes in fog. Nothing here is closer than the
- * fog's near plane, so all of it reads as depth rather than as geometry —
- * exactly the era's set dressing budget.
- */
-function ArenaDressing(): React.ReactElement {
-  const trunk = useMemo(
-    () =>
-      createPs1Material({
-        color: '#233521',
-        fogColor: ARENA_SKY.mid,
-        fogNear: ARENA_FOG_NEAR,
-        fogFar: ARENA_FOG_FAR,
-      }),
-    [],
-  )
-  const canopy = useMemo(
-    () =>
-      createPs1Material({
-        color: '#1a2c1a',
-        fogColor: ARENA_SKY.mid,
-        fogNear: ARENA_FOG_NEAR,
-        fogFar: ARENA_FOG_FAR,
-      }),
-    [],
-  )
-  const shrine = useMemo(
-    () =>
-      createPs1Material({
-        color: '#4a3a2a',
-        fogColor: ARENA_SKY.mid,
-        fogNear: ARENA_FOG_NEAR,
-        fogFar: ARENA_FOG_FAR,
-      }),
-    [],
+  useEffect(
+    () => () => {
+      for (const material of Object.values(materials)) material.dispose()
+    },
+    [materials],
   )
 
   // A fixed ring of trees. Deterministic, so the venue is the same venue
@@ -319,6 +385,10 @@ function ArenaDressing(): React.ReactElement {
 
   return (
     <group>
+      <mesh material={floor} rotation={[-Math.PI / 2, 0, 0]} position={[0, 0, 0]}>
+        <planeGeometry args={[ARENA_FLOOR_SIZE, ARENA_FLOOR_SIZE]} />
+      </mesh>
+
       {trees.map((tree, index) => (
         <group key={index} position={[tree.x, 0, tree.z]}>
           <mesh material={trunk} position={[0, tree.h / 2, 0]}>
@@ -348,6 +418,8 @@ function ArenaDressing(): React.ReactElement {
 
 const SPARK_LIFE_MS = 320
 const SPARK_POOL = 6
+/** How far toward the camera a spark sits, so it draws over the bodies. */
+const SPARK_FORWARD = 0.3
 
 function makeSparkTexture(color: string): THREE.CanvasTexture {
   const size = 64
@@ -388,7 +460,13 @@ const SPARK_COLORS: Record<SparkEvent['kind'], string> = {
   block: '#e8e8f0',
 }
 
-function HitSparks({ sim }: { readonly sim: ReturnType<typeof useFightSim> }): React.ReactElement {
+function HitSparks({
+  sim,
+  floorAt,
+}: {
+  readonly sim: ReturnType<typeof useFightSim>
+  readonly floorAt: (x: number) => number
+}): React.ReactElement {
   const sprites = useRef<Array<THREE.Sprite | null>>([])
   // One starburst per kind, shared: the texture never varies within a kind.
   const textures = useMemo(
@@ -444,7 +522,8 @@ function HitSparks({ sim }: { readonly sim: ReturnType<typeof useFightSim> }): R
       material.opacity = 1 - age
       sprite.visible = true
       sprite.material = material
-      sprite.position.set(spark.x, spark.y, 0.3)
+      // Ring units, inside the scaled group with the fighters.
+      sprite.position.set(spark.x, spark.y + floorAt(spark.x), SPARK_FORWARD)
       sprite.scale.setScalar(pop)
     }
   })
@@ -482,60 +561,51 @@ function SimDriver({
   return null
 }
 
-/** The genre's camera: side-on, dollying with the gap, pushing in on a KO. */
+/**
+ * The genre's camera: side-on, dollying with the gap, pushing in on a KO.
+ * Rides the stage's floor, so a bout on a raised court is framed at the
+ * same waist height as one in the sand. Works in fighter units and
+ * multiplies out to the world at the end, so the framing is the venue's
+ * fighterScale away from the fighters whatever the venue.
+ */
 function FightCamera({ sim }: { readonly sim: ReturnType<typeof useFightSim> }): null {
   useFrame(({ camera }, delta) => {
     const state = sim.state.current
     const fighters = state.fighters
     const [left, right] = fighters ?? [null, null]
+    const scale = state.stage.fighterScale
     const midX = left && right ? (left.x + right.x) / 2 : 0
-    const gap = left && right ? Math.abs(right.x - left.x) : 3
+    const gap = left && right ? Math.abs(right.x - left.x) : STANCE_X * 2
+    // The world floor under the pair, in world units.
+    const floor = stageFloorAt(state.stage.line, midX * scale)
 
     const dramatic = state.phase === 'ko' || state.phase === 'victory'
-    const targetDistance = dramatic
-      ? KO_DISTANCE
-      : CAMERA_DISTANCE_BASE + Math.max(0, gap - 2.4) * CAMERA_DISTANCE_PER_GAP
+    const venue = state.stage.camera
+    const targetDistance =
+      (dramatic ? KO_DISTANCE : CAMERA_DISTANCE_BASE + Math.max(0, gap - CAMERA_GAP_REST) * CAMERA_DISTANCE_PER_GAP) *
+      venue.distance
     const targetHeight = dramatic ? KO_HEIGHT : CAMERA_HEIGHT
     // During the intro the camera swings around the pair — the walk-on shot.
     const introSwing =
-      state.phase === 'intro' ? Math.sin((1 - state.phaseT / 3.2) * 1.2) * 2.2 : 0
+      state.phase === 'intro' ? Math.sin((1 - state.phaseT / INTRO_SWING_S) * 1.2) * INTRO_SWING : 0
 
-    const ease = Math.min(1, delta * 2.4)
-    camera.position.x += (midX + introSwing - camera.position.x) * ease
-    camera.position.y += (targetHeight - camera.position.y) * ease
-    camera.position.z += (targetDistance - camera.position.z) * ease
-    camera.lookAt(midX, CAMERA_LOOK_HEIGHT, 0)
+    const ease = Math.min(1, delta * CAMERA_EASE)
+    camera.position.x += ((midX + introSwing) * scale - camera.position.x) * ease
+    camera.position.y += (floor + targetHeight * scale - camera.position.y) * ease
+    camera.position.z += (venue.ringZ + targetDistance * scale - camera.position.z) * ease
+    camera.lookAt(midX * scale, floor + CAMERA_LOOK_HEIGHT * scale, venue.ringZ)
+    if (camera instanceof THREE.PerspectiveCamera) {
+      const fov = CAMERA_FOV * venue.fov
+      if (Math.abs(camera.fov - fov) > 0.01) {
+        camera.fov = fov
+        camera.updateProjectionMatrix()
+      }
+    }
   })
   return null
 }
 
 /** Same contract as the race's: survive context loss, release on unmount. */
-function ContextGuard({ onRestored }: { readonly onRestored: () => void }): null {
-  const gl = useThree((state) => state.gl)
-
-  useEffect(() => {
-    const canvas = gl.domElement
-    const handleLost = (event: Event): void => {
-      event.preventDefault()
-      console.warn('Fight channel: WebGL context lost — waiting for restore.')
-    }
-    const handleRestored = (): void => {
-      console.warn('Fight channel: WebGL context restored — rebuilding scene.')
-      onRestored()
-    }
-    canvas.addEventListener('webglcontextlost', handleLost)
-    canvas.addEventListener('webglcontextrestored', handleRestored)
-    return () => {
-      canvas.removeEventListener('webglcontextlost', handleLost)
-      canvas.removeEventListener('webglcontextrestored', handleRestored)
-      // No manual loseContext here: fiber's root teardown force-loses the
-      // context itself, and losing it twice poisoned the GPU channel — see
-      // the race's ContextGuard for the full story.
-    }
-  }, [gl, onRestored])
-
-  return null
-}
 
 /** Fixed low internal height, browser-scaled up — the pixel grid. */
 function ResolutionLock({ height }: { readonly height: number }): null {

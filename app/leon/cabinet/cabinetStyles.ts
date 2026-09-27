@@ -45,6 +45,38 @@ export const CABINET_STYLES = `
     .cab-pick:active { transform: none; }
   }
 
+  /* The window's entrance: veil fades, panel rises a few pixels. Compositor
+     only — see Window.tsx for why this is not a Motion transition. */
+  @keyframes cabWindowVeil {
+    from { opacity: 0; }
+    to { opacity: 1; }
+  }
+  @keyframes cabWindowPanel {
+    from { opacity: 0; transform: translateY(10px); }
+    to { opacity: 1; transform: translateY(0); }
+  }
+  .cab-window-veil { animation: cabWindowVeil 140ms ease-out both; }
+  .cab-window-panel { animation: cabWindowPanel 160ms ease-out both; }
+  @media (prefers-reduced-motion: reduce) {
+    .cab-window-veil, .cab-window-panel { animation: none; }
+  }
+
+  /* The key prompt: shown on entering a game, gone by itself. */
+  @keyframes cabKeyPrompt {
+    0% { opacity: 0; transform: translateY(6px); }
+    8% { opacity: 1; transform: translateY(0); }
+    85% { opacity: 1; }
+    100% { opacity: 0; }
+  }
+  .cab-key-prompt { animation: cabKeyPrompt 9s ease-out both; }
+
+  /* The room's hint strip: the same prompt, but it stays — the keys it
+     names change with the mode, and it comes in on the window's beat. */
+  .cab-room-hint { animation: cabWindowPanel 160ms ease-out both; }
+  @media (prefers-reduced-motion: reduce) {
+    .cab-room-hint { animation: none; }
+  }
+
   @keyframes scanline {
     0% { transform: translateY(-100%); }
     100% { transform: translateY(100vh); }

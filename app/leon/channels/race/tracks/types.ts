@@ -1,4 +1,5 @@
 import type * as THREE from 'three'
+import type { TrackBoundaries } from '../corridor'
 
 // What the channel needs to know about a circuit.
 //
@@ -26,6 +27,22 @@ export interface BakedTrack {
   /** Distance from the origin to the furthest geometry, on the XZ plane. */
   readonly modelRadius: number
   readonly materials: ReadonlyArray<string>
+  /**
+   * Where the walls are, sample by sample around the lap.
+   *
+   * Written by scripts/bakeCorridor.mjs, which fires rays sideways off the
+   * line at road level against the *baked* model — the one in `public`, the
+   * one that is actually drawn — and records what they hit. Optional because
+   * a circuit baked before that script existed simply has none, and falls
+   * back to measuring itself in the browser at load.
+   *
+   * Editable by hand, and expected to be: the rays cannot tell a guardrail
+   * from a gantry leg, and a model with a gap in a rail reports a road wider
+   * than it is. A number here is a claim about where the barrier is, in the
+   * same lateral units the cars are clamped in, and a wrong one can just be
+   * corrected.
+   */
+  readonly boundaries?: TrackBoundaries
   readonly baked: {
     readonly triangles: number
     readonly sourceTriangles: number
@@ -105,8 +122,24 @@ export interface TrackDefinition {
   readonly title: string
   /** Baked model under `/ps1/tracks`, or null for the procedural circuit. */
   readonly model: string | null
+  /**
+   * The path the cars follow: a closed loop through the middle of the road.
+   *
+   * Traced off the road's own footprint by scripts/bakeTrack.mjs, then
+   * corrected onto the middle of the measured gap — and onto the road's
+   * measured height — by scripts/bakeCorridor.mjs. Both are first drafts in
+   * the end, and this is source: a corner the line cuts badly is fixed by
+   * editing these numbers.
+   */
   readonly controlPoints: ReadonlyArray<readonly [number, number, number]>
   readonly roadHalfWidth: number
+  /**
+   * The boundaries the cars may not cross, in the same lateral units as the
+   * corridor they feed. See BakedTrack.boundaries; scaled with the venue by
+   * `worldScale` on the way through the registry, because an offset measured
+   * against the model has to shrink when the model does.
+   */
+  readonly boundaries?: TrackBoundaries
   readonly laneCount: number
   /**
    * Catmull-Rom tension. 0.5 is the centripetal default and is right for a

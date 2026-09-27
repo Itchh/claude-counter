@@ -1,22 +1,35 @@
-// One spec per game, and the whole of a title flag's identity lives in it:
-// what the cloth is printed with, what the wordmark is cut from, and what is
-// thrown across it. The baker in flagTexture reads this and nothing else, so
-// a new game's title is an entry here rather than a second canvas routine.
+// One spec per game, and the whole of a title object's identity lives in it:
+// what it is, what its surface is printed with, what the wordmark is cut from,
+// and what is thrown across it. The baker in flagTexture reads this and
+// nothing else, so a new game's title is an entry here rather than a second
+// canvas routine.
 //
 // The three are deliberately not one template recoloured. A racing logo, a
 // fighting logo and a squadron badge were three different jobs in the period
-// this is borrowing from, and the field painters keep that difference: a
-// starting grid's checker, a hazard stripe, a painted sky.
+// this is borrowing from, and the shapes keep that difference: the racer's
+// title is a flag streaming in the wind, the fight's is a ring banner hung
+// from a rail, the squadron's is not cloth at all but a riveted panel off the
+// side of the aircraft. Same sky behind, same furniture under, same pixel
+// grid and palette treatment over all three — the object changes, the family
+// does not.
 
-/** How the cloth itself is printed, before anything is thrown at it. */
-export type FieldKind = 'checker' | 'hazard' | 'sky'
+/**
+ * What the title is, physically. `flag` ripples in a crosswind pinned at its
+ * edges; `banner` hangs from a rail and sways from the top; `panel` is rigid
+ * metal that rocks with the idling engine behind it.
+ */
+export type ShapeKind = 'flag' | 'banner' | 'panel'
 
-/** What is scattered over the cloth around the wordmark. */
+/** How the surface itself is printed, before anything is thrown at it. */
+export type FieldKind = 'checker' | 'hazard' | 'skin'
+
+/** What sits over the surface around or behind the wordmark. */
 export type MarkKind = 'splash' | 'impact' | 'roundel'
 
 export interface TitleSpec {
   readonly id: string
-  /** Painted straight onto the cloth, so it warps with the ripple. */
+  readonly shape: ShapeKind
+  /** Painted straight onto the surface, so it moves with the object. */
   readonly wordmark: string
   /** Shown under the flag on an attract card. */
   readonly subtitle: string
@@ -46,6 +59,7 @@ export interface TitleSpec {
  */
 export const RACE_TITLE: TitleSpec = {
   id: 'race',
+  shape: 'flag',
   wordmark: 'CLAUDE RACER',
   subtitle: 'TOKEN GRAND PRIX',
   field: 'checker',
@@ -74,12 +88,15 @@ export const RACE_TITLE: TitleSpec = {
 }
 
 /**
- * The fight's cloth is a ring apron, not a grid: heavy amber hazard stripes
- * running on the diagonal, the wordmark struck in gold rather than chrome,
- * and dark impacts thrown at it instead of paint.
+ * The fight's title is a ring banner, not a flag: a vertical drape hung from
+ * a rail, weighted at the hem, swaying slowly rather than streaming. Heavy
+ * amber hazard stripes run the diagonal, the wordmark stacks in two lines
+ * struck in gold rather than chrome, and behind it the banner has taken a
+ * punch — one fist-crack radiating out from the centre of the lockup.
  */
 export const FIGHT_TITLE: TitleSpec = {
   id: 'fight',
+  shape: 'banner',
   wordmark: 'CLAUDE FIGHTER',
   subtitle: 'IRON FIST',
   field: 'hazard',
@@ -108,15 +125,18 @@ export const FIGHT_TITLE: TitleSpec = {
 }
 
 /**
- * The squadron badge sits square — no racing lean — on a painted sky rather
- * than a printed field, with roundels where the other two carry splashes.
- * Steel and navy, because it is a serial plate, not a logo.
+ * The squadron's title is not cloth at all: a circular fuselage panel, its
+ * painted skin riveted round the rim and seamed where the plates meet, with
+ * the roundel stencilled dead centre and the wordmark sitting square across
+ * it — no racing lean, because this is a serial plate, not a logo. The
+ * propeller's sweep smears faintly across the paint. Steel and navy.
  */
 export const DOGFIGHT_TITLE: TitleSpec = {
   id: 'dogfight',
+  shape: 'panel',
   wordmark: 'CLAUDE ACES',
   subtitle: 'ANGELS ONE-FIVE',
-  field: 'sky',
+  field: 'skin',
   fieldLight: '#cfd9e4',
   fieldDark: '#5d7fa8',
   mark: 'roundel',

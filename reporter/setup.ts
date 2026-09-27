@@ -8,6 +8,8 @@ import path from 'path'
 import { fileURLToPath } from 'url'
 import pc from 'picocolors'
 import { COLOR_PRESETS } from './colors'
+import { readClaudeAccount } from './claudeAccount'
+import { login } from './login'
 
 interface Config {
   name: string
@@ -16,6 +18,8 @@ interface Config {
   serverUrl: string
   secret: string
   color?: string
+  /** The Claude account signed in on this machine, when one was found. */
+  claudeAccountId?: string
 }
 
 const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
@@ -212,23 +216,31 @@ async function promptConfig(): Promise<SetupResult> {
     secret = await ask(rl, 'Shared secret')
   }
 
+  // Identity. The Claude account signed in on this machine is the one the
+  // board is really about, so it wins; git's email is the fallback for a
+  // machine where Claude Code has never been opened. An existing install
+  // keeps whatever email it already reports under — the key never migrates.
+  const claudeAccount = await readClaudeAccount()
+  const existingEmail = await loadExistingEmail()
   const gitEmail = await detectGitEmail()
-  if (!gitEmail) {
+  const email = existingEmail ?? claudeAccount?.email ?? gitEmail
+  if (!email) {
     rl.close()
     process.stdout.write(
-      '\n' + pc.red('✖') + ' No valid email found in git config --global user.email.\n' +
-        pc.dim('│  The leaderboard uses your git email to merge counts across your devices.\n') +
-        pc.dim('│  Set it with:\n') +
+      '\n' + pc.red('✖') + ' No email found: Claude Code is not signed in here and git has no user.email.\n' +
+        pc.dim('│  The leaderboard uses your email to merge counts across your devices.\n') +
+        pc.dim('│  Either sign in to Claude Code, or set:\n') +
         pc.dim('│    git config --global user.email "you@example.com"\n') +
         pc.dim('└  Then re-run setup.\n'),
     )
     process.exit(1)
   }
+  const emailSource =
+    existingEmail ? 'from your existing config' : claudeAccount?.email === email ? 'your Claude account' : 'from git config'
   process.stdout.write(
-    pc.cyan('◆') + '  ' + pc.bold('Your email') + pc.dim(` (from git config, used to merge devices)\n`) +
-      pc.dim('│') + '  ' + pc.bold(gitEmail) + '\n',
+    pc.cyan('◆') + '  ' + pc.bold('Your email') + pc.dim(` (${emailSource}, used to merge devices)\n`) +
+      pc.dim('│') + '  ' + pc.bold(email) + '\n',
   )
-  const email = gitEmail
 
   const name = await ask(rl, "What's your display name?", (v) => {
     if (!v) return 'Name is required'
@@ -268,8 +280,21 @@ async function promptConfig(): Promise<SetupResult> {
       serverUrl: serverUrl.replace(/\/$/, ''),
       secret,
       color,
+      ...(claudeAccount?.accountId ? { claudeAccountId: claudeAccount.accountId } : {}),
     },
     leaderboardUrl: repoConfig?.leaderboardUrl ?? null,
+  }
+}
+
+async function loadExistingEmail(): Promise<string | undefined> {
+  try {
+    const raw = await readFile(CONFIG_PATH, 'utf-8')
+    const parsed = JSON.parse(raw) as Partial<Config>
+    return typeof parsed.email === 'string' && EMAIL_REGEX.test(parsed.email)
+      ? parsed.email.toLowerCase()
+      : undefined
+  } catch {
+    return undefined
   }
 }
 
@@ -416,6 +441,16 @@ async function main(): Promise<void> {
     log(amber('  →') + ' View the leaderboard: ' + pc.underline(pc.cyan(leaderboardUrl)))
   }
   log('')
+
+  // And sign them in while they are here. Failure is not fatal — the board
+  // works without an account, and `bun login` repeats this any time.
+  try {
+    await login()
+  } catch (err) {
+    log(pc.yellow('⚠') + ' Could not sign you in just now: ' + (err instanceof Error ? err.message : String(err)))
+    log(pc.dim('  Run "bun login" from the reporter folder to try again.'))
+    log('')
+  }
 }
 
 void main().catch((err) => {
