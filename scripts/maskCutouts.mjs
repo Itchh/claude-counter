@@ -37,7 +37,14 @@ const BORDER_AGREEMENT = 0.45
  * are the leaves' own shadows; at a generous tolerance the key swallowed most
  * of the foliage as well as the space around it.
  */
-const KEY_TOLERANCE = 14
+const KEY_TOLERANCE = 22
+/**
+ * Per-channel distance within which border texels are counted as one
+ * background. Wider than the key itself: this only decides whether a page
+ * HAS a background, and the dither spreads a flat colour further than the
+ * flood should follow.
+ */
+const CLUSTER_TOLERANCE = 30
 /**
  * How much of the page the flooded background must cover to be a background,
  * and how much it must not exceed before the page IS its background.
@@ -63,6 +70,57 @@ const UPRIGHT_NORMAL_Y = 0.4
 /** Alpha cutoff written onto the materials that gain a mask. */
 const ALPHA_CUTOFF = 0.5
 
+/** Degrees of hue either side of the background's, on a named page. */
+const HUE_TOLERANCE = 18
+/** Below this saturation a texel is grey or black, never background. */
+const MIN_KEY_SATURATION = 0.35
+
+function toHsv(r, g, b) {
+  const max = Math.max(r, g, b)
+  const min = Math.min(r, g, b)
+  const delta = max - min
+  let h = 0
+  if (delta > 0) {
+    if (max === r) h = 60 * (((g - b) / delta) % 6)
+    else if (max === g) h = 60 * ((b - r) / delta + 2)
+    else h = 60 * ((r - g) / delta + 4)
+    if (h < 0) h += 360
+  }
+  return { h, s: max === 0 ? 0 : delta / max, v: max / 255 }
+}
+
+/**
+ * Red as a share of green, at or above which a texel is a leaf, not backdrop.
+ * Measured off Bushido Peak's bamboo pages: the backdrop runs 30,57,1 to
+ * 76,118,4 (red at most six tenths of green); the leaves run 104,120,25 to
+ * 169,167,27 (red near green). Red's share is the whole separation; blue
+ * is only there to keep a grey out.
+ */
+const GREENKEY_RED_SHARE = 0.66
+/** Blue as a share of green above which a texel is a leaf or grey-green, not chroma backdrop. */
+const GREENKEY_BLUE_SHARE = 0.35
+/** Green below which nothing is bright enough to be the backdrop. */
+const GREENKEY_MIN_GREEN = 40
+
+function findChromaGreen(data, width, height, channels) {
+  const mask = new Uint8Array(width * height)
+  let filled = 0
+  for (let i = 0; i < width * height; i += 1) {
+    const p = i * channels
+    const g = data[p + 1]
+    if (g >= GREENKEY_MIN_GREEN && data[p] < g * GREENKEY_RED_SHARE && data[p + 2] < g * GREENKEY_BLUE_SHARE) {
+      mask[i] = 1
+      filled += 1
+    }
+  }
+  const coverage = filled / (width * height)
+  if (coverage < MIN_COVERAGE || coverage > MAX_COVERAGE) {
+    console.log(`    chroma green covered ${Math.round(coverage * 100)}% of the page — outside ${MIN_COVERAGE * 100}–${MAX_COVERAGE * 100}%`)
+    return null
+  }
+  return { mask, coverage, colour: [0, 255, 0] }
+}
+
 const key5 = (r, g, b) => ((r >> 3) << 10) | ((g >> 3) << 5) | (b >> 3)
 
 /**
@@ -77,7 +135,7 @@ const key5 = (r, g, b) => ((r >> 3) << 10) | ((g >> 3) << 5) | (b >> 3)
  * and leaves everything enclosed by the artwork alone. It is a magic wand,
  * and a magic wand is what a person would reach for here.
  */
-function findBackground(data, width, height, channels) {
+function findBackground(data, width, height, channels, forced) {
   // Already transparent somewhere? Then the page kept its mask and is not ours.
   if (channels === 4) {
     for (let i = 3; i < data.length; i += 4) {
@@ -110,14 +168,92 @@ function findBackground(data, width, height, channels) {
       bestCount = count
     }
   }
-  if (bestKey < 0 || bestCount / borderCount < BORDER_AGREEMENT) return null
+  if (bestKey < 0) return null
 
-  const keyR = ((bestKey >> 10) & 31) << 3
-  const keyG = ((bestKey >> 5) & 31) << 3
-  const keyB = (bestKey & 31) << 3
+  // The bake's palette step dithers, so a background that was one flat green
+  // in the rip arrives here as a handful of neighbouring greens scattered
+  // texel by texel — and no single 5-bit bucket holds more than a few percent
+  // of the border. The agreement is therefore measured as a cluster: every
+  // border texel within CLUSTER_TOLERANCE of the commonest bucket counts,
+  // and the key colour is their mean rather than the bucket's centre.
+  // Which bucket seeds the cluster matters on a dithered page: the commonest
+  // single bucket can be a dark fleck of the artwork while the background's
+  // greens are spread thin across a dozen neighbours. So every bucket the
+  // border holds is tried as a seed and the widest cluster wins.
+  const borderPixels = []
+  for (let x = 0; x < width; x += 1) {
+    borderPixels.push((0 * width + x) * channels, ((height - 1) * width + x) * channels)
+  }
+  for (let y = 1; y < height - 1; y += 1) {
+    borderPixels.push((y * width) * channels, (y * width + width - 1) * channels)
+  }
+  const clusterAround = (r, g, b) => {
+    let sumR = 0
+    let sumG = 0
+    let sumB = 0
+    let count = 0
+    for (const i of borderPixels) {
+      if (
+        Math.abs(data[i] - r) <= CLUSTER_TOLERANCE &&
+        Math.abs(data[i + 1] - g) <= CLUSTER_TOLERANCE &&
+        Math.abs(data[i + 2] - b) <= CLUSTER_TOLERANCE
+      ) {
+        sumR += data[i]
+        sumG += data[i + 1]
+        sumB += data[i + 2]
+        count += 1
+      }
+    }
+    return { count, sumR, sumG, sumB }
+  }
+  let seedR = ((bestKey >> 10) & 31) << 3
+  let seedG = ((bestKey >> 5) & 31) << 3
+  let seedB = (bestKey & 31) << 3
+  let best = clusterAround(seedR, seedG, seedB)
+  if (forced) {
+    for (const [k] of [...border.entries()].sort((a, b) => b[1] - a[1]).slice(0, 48)) {
+      const r = ((k >> 10) & 31) << 3
+      const g = ((k >> 5) & 31) << 3
+      const bl = (k & 31) << 3
+      const candidate = clusterAround(r, g, bl)
+      if (candidate.count > best.count) {
+        best = candidate
+        seedR = r
+        seedG = g
+        seedB = bl
+      }
+    }
+  }
+  const { count: clustered, sumR, sumG, sumB } = best
+  // Unforced, the agreement is the strict one — one 5-bit bucket has to hold
+  // the border — because on a dithered page the cluster test also passes
+  // plaster walls and shop fronts, and a hole in a wall is worse than a slab
+  // in a tree. Named pages skip the vote: a person has looked at them.
+  const agreement = forced ? clustered / borderCount : bestCount / borderCount
+  if (agreement < BORDER_AGREEMENT) {
+    if (forced) console.log(`    border agreement ${Math.round(agreement * 100)}% around rgb(${seedR},${seedG},${seedB}) — below ${BORDER_AGREEMENT * 100}%`)
+    return null
+  }
 
+  const keyR = Math.round(sumR / clustered)
+  const keyG = Math.round(sumG / clustered)
+  const keyB = Math.round(sumB / clustered)
+
+  // Named pages key on hue rather than on colour. A rip's foliage backdrop
+  // is often a vignette — the same green, darker towards the corners — and a
+  // flood measured by colour distance stops a few texels in from the edge.
+  // Hue survives the vignette; what changes is only brightness. Saturation
+  // is checked too, so a grey fleck of bark or a black shadow inside the
+  // canopy never reads as background.
+  const seedHsv = toHsv(keyR, keyG, keyB)
+  const hueKeyed = forced && seedHsv.s >= MIN_KEY_SATURATION
   const isKey = (index) => {
     const p = index * channels
+    if (hueKeyed) {
+      const hsv = toHsv(data[p], data[p + 1], data[p + 2])
+      const hueGap = Math.min(Math.abs(hsv.h - seedHsv.h), 360 - Math.abs(hsv.h - seedHsv.h))
+      return hsv.s >= MIN_KEY_SATURATION && hueGap <= HUE_TOLERANCE
+    }
     return (
       Math.abs(data[p] - keyR) <= KEY_TOLERANCE &&
       Math.abs(data[p + 1] - keyG) <= KEY_TOLERANCE &&
@@ -153,7 +289,10 @@ function findBackground(data, width, height, channels) {
   }
 
   const coverage = filled / (width * height)
-  if (coverage < MIN_COVERAGE || coverage > MAX_COVERAGE) return null
+  if (coverage < MIN_COVERAGE || coverage > MAX_COVERAGE) {
+    if (forced) console.log(`    flood covered ${Math.round(coverage * 100)}% of the page — outside ${MIN_COVERAGE * 100}–${MAX_COVERAGE * 100}%`)
+    return null
+  }
 
   return { mask, coverage, colour: [keyR, keyG, keyB] }
 }
@@ -234,8 +373,21 @@ function measureUprightness(document) {
 
 async function main() {
   const [path, ...flags] = process.argv.slice(2)
-  if (!path) throw new Error('usage: node scripts/maskCutouts.mjs <track.glb> [--dry]')
+  if (!path) throw new Error('usage: node scripts/maskCutouts.mjs <track.glb> [--dry] [--only=material,material]')
   const dry = flags.includes('--dry')
+  // `--only=a,b,c` names the materials whose pages are to be keyed, and
+  // nothing else is touched. The auto vote stays for a fresh rip; this is
+  // for the pages it cannot see through the dither, chosen off a contact
+  // sheet by eye.
+  const onlyFlag = flags.find((flag) => flag.startsWith('--only='))
+  const only = onlyFlag ? new Set(onlyFlag.slice('--only='.length).split(',')) : null
+  // `--greenkey=a,b` is for the one kind of page no flood can read: leaves
+  // painted over a backdrop of the same hue. What separates them is not hue
+  // but purity — the backdrop is a chroma green with almost no red in it,
+  // the leaves are yellow-green with plenty — so every texel whose red is
+  // under GREENKEY_RED_SHARE of its green is cut, flood or no flood.
+  const greenFlag = flags.find((flag) => flag.startsWith('--greenkey='))
+  const greenkey = greenFlag ? new Set(greenFlag.slice('--greenkey='.length).split(',')) : new Set()
 
   const io = new NodeIO().registerExtensions(ALL_EXTENSIONS)
   const document = await io.read(path)
@@ -253,14 +405,22 @@ async function main() {
     // lies down is a road, a pavement or a bank, and the background it seems
     // to have is the surface itself.
     const upright = uprightByTexture.get(texture) ?? 0
-    if (upright < MIN_UPRIGHT_AREA) continue
+    const owners = materials.filter((material) => material.getBaseColorTexture() === texture).map((material) => material.getName())
+    const forced = only !== null && owners.some((name) => only.has(name))
+    const greenKeyed = owners.some((name) => greenkey.has(name))
+    if (only !== null && !forced && !greenKeyed) continue
+    if (greenkey.size > 0 && only === null && !greenKeyed) continue
+    if (!forced && !greenKeyed && upright < MIN_UPRIGHT_AREA) continue
 
     const { data, info } = await sharp(Buffer.from(image))
       .ensureAlpha()
       .raw()
       .toBuffer({ resolveWithObject: true })
 
-    const found = findBackground(data, info.width, info.height, info.channels)
+    const found = greenKeyed
+      ? findChromaGreen(data, info.width, info.height, info.channels)
+      : findBackground(data, info.width, info.height, info.channels, forced)
+    if (!found && forced) console.log(`  page ${index} (${owners.join(', ')}) named but no background found`)
     if (!found) continue
     keyed += 1
     console.log(

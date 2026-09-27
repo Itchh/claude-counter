@@ -1,6 +1,7 @@
 import driftYard from './drift-yard.track.json'
 import lonePeak from './lone-peak.track.json'
 import bushidoPeak from './bushido-peak.track.json'
+import type { TrackBoundaries } from '../corridor'
 import { RENDER_PROFILES, type BakedTrack, type TrackDefinition, type TrackSky } from './types'
 import { PS1 } from '../../../ps1/theme'
 
@@ -58,6 +59,11 @@ function fromBaked(
       ([x, y, z]) => [x * worldScale, y * worldScale, z * worldScale] as const,
     ),
     roadHalfWidth: baked.roadHalfWidth * worldScale,
+    // Scaled with the geometry for the same reason the line is: these are
+    // distances measured against the model, and a venue shrunk to 55% has
+    // barriers 55% as far apart. Left unscaled, Drift Yard's cars would be
+    // held inside a corridor half again as wide as its actual road.
+    boundaries: baked.boundaries && scaleBoundaries(baked.boundaries, worldScale),
     laneCount: 8,
     curveTension: 0.5,
     // An imported circuit brings its own barriers, fences and foliage.
@@ -69,6 +75,17 @@ function fromBaked(
     // earlier machine's wobble is noise rather than signature.
     render: RENDER_PROFILES.ps2,
     ...art,
+  }
+}
+
+/** Scales a set of measured boundaries with the venue they were measured in. */
+function scaleBoundaries(boundaries: TrackBoundaries, scale: number): TrackBoundaries {
+  if (scale === 1) return boundaries
+  const apply = (value: number | null): number | null => (value === null ? null : value * scale)
+  return {
+    ...boundaries,
+    left: boundaries.left.map(apply),
+    right: boundaries.right.map(apply),
   }
 }
 
@@ -272,24 +289,31 @@ const LONE_PEAK = fromBaked(lonePeak as BakedTrack, {
   surfaces: {
     // The rip's own backdrop — the distant mountains and valley town. The
     // game shipped this chunk untextured (it was designed to be read through
-    // haze), so left alone it wore the pipeline's deliberate fallback grey
-    // and filled half of every wide shot with "unfinished". It carries a
-    // generated alpine rock page now (scripts/makeSurfaceTextures.mjs),
-    // world-projected since the chunk has no UVs, and still pulled hard
-    // towards the haze tint — a backdrop is scenery half-way to being sky,
-    // but it should be *rock* dissolving into sky, not a flat card.
-    // The tint is held low and the tile fairly tight because this chunk is
-    // not only backdrop: stretches of the playable valley floor belong to it
-    // too, and under the old flat #a8bcd6 they read as a lake the cars were
-    // driving across. The rock has to carry those sections up close; the
-    // haze can have them back at distance, where the fog does the tinting.
+    // haze) and it is the only material on the circuit that does: every
+    // other one of the hundred carries its own page. So it is also the only
+    // thing on screen that can read as a missing asset, and it did, twice.
+    // Flat, it filled half of every wide shot with lavender. Under the
+    // procedural rock page that replaced it (makeSurfaceTextures.mjs) it was
+    // no better up close — fractal noise has no silhouette, so the near
+    // valley floor came out as a grey sheet with smears in it.
+    //
+    // The page it wears now is cut out of this rip's own texture set:
+    // granite with conifer growing out of it, authored for the mountain this
+    // chunk is a continuation of. See scripts/makeBackdropTextures.mjs.
+    // World-projected, since the chunk has no UVs.
+    //
+    // The tint is low and the tile tight because this chunk is not only
+    // backdrop: stretches of the playable valley floor belong to it too, and
+    // the rock has to carry those sections at ten units as well as at a
+    // thousand. The haze can have them back at distance, where the fog does
+    // the tinting anyway.
     Merged_materials: {
       color: '#a8bcd6',
-      tint: 0.28,
+      tint: 0.16,
       ambient: 1,
       distant: true,
-      textureUrl: '/ps1/textures/alpine-rock.png',
-      textureScale: 34,
+      textureUrl: '/ps1/textures/alpine-backdrop.png',
+      textureScale: 22,
     },
     // Leaf litter. In the source game this was a decal — a scatter of fallen
     // leaves on a transparent page, laid over the road and verges in flat
@@ -310,16 +334,17 @@ const BUSHIDO_PEAK = fromBaked(bushidoPeak as BakedTrack, {
   laneCount: 6,
   roadHalfWidth: 6.0,
   surfaces: {
-    // Same story as Lone Peak's backdrop, in this valley's own light: warm
-    // sandstone headed towards GOLDEN_SKY's horizon rather than alpine haze,
-    // textured with the generated warm rock page for the same reason.
+    // Same story as Lone Peak's backdrop, and the same answer: a page lifted
+    // out of this rip's own set rather than invented. Moss over wet stone —
+    // the green-grey of a Japanese mountainside — held towards GOLDEN_SKY's
+    // horizon rather than alpine haze.
     Merged_materials: {
       color: '#b08a66',
-      tint: 0.28,
+      tint: 0.16,
       ambient: 1,
       distant: true,
-      textureUrl: '/ps1/textures/warm-rock.png',
-      textureScale: 34,
+      textureUrl: '/ps1/textures/bushido-backdrop.png',
+      textureScale: 22,
     },
   },
   surfaceDefaults: RIP_SURFACE_DEFAULTS,

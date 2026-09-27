@@ -2,14 +2,16 @@
 
 import { PS1, FONTS } from './ps1/theme'
 import { PS1_STYLES } from './ps1/styles'
-import { TitleScreen } from './ps1/TitleScreen'
 import { Cabinet } from './cabinet/Cabinet'
 import { CABINET_STYLES } from './cabinet/cabinetStyles'
 import { HUD_SCALE_STYLES } from './ps1/hudScale'
 
-// The console cabinet, and the whole product: the CRT, the boot sequence, the
-// race. There is no other view to switch to, so this is what the page renders.
-// The title screen sits on top until someone presses start.
+// The console cabinet, and the whole product: the room, the CRT, the games.
+// There is no other view to switch to, so this is what the page renders. It
+// boots straight into the room — the arcade's own lit screen is the attract
+// mode, so there is no gate in front of it any more. The CRT's glass is the
+// last thing in the tree and the topmost: every window, HUD, prompt and
+// sight is under it, because the whole product is a picture on a tube.
 
 export function LeonLeaderboard(): React.ReactElement {
   return (
@@ -36,7 +38,6 @@ export function LeonLeaderboard(): React.ReactElement {
 
       <div className="crt-overlay" />
       <div className="scanline-bar" />
-      <TitleScreen />
     </div>
   )
 }

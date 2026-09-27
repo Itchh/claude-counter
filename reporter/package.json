@@ -8,7 +8,8 @@
     "setup": "bun setup.ts",
     "remove": "bun uninstall.ts",
     "restart": "launchctl kickstart -k gui/$(id -u)/com.leaderboard.reporter",
-    "logs": "tail -f $HOME/Library/Logs/leaderboard-reporter.log"
+    "logs": "tail -f $HOME/Library/Logs/leaderboard-reporter.log",
+    "login": "bun login.ts"
   },
   "dependencies": {
     "chokidar": "^3.6.0",

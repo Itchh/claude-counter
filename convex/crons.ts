@@ -31,4 +31,20 @@ crons.interval(
   {},
 )
 
+// A lease nobody is heartbeating is a closed laptop. Clients already treat a
+// lapsed one as dead; this just keeps the table from filling with ghosts.
+crons.interval(
+  "sweep expired controls",
+  { minutes: 1 },
+  internal.control.sweepExpired,
+  {},
+)
+
+crons.interval(
+  "prune login codes",
+  { hours: 1 },
+  internal.deviceLink.pruneLoginCodes,
+  {},
+)
+
 export default crons

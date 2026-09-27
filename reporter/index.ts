@@ -1,4 +1,5 @@
 import { spawn } from 'child_process'
+import { readClaudeAccount } from './claudeAccount'
 import { randomUUID } from 'crypto'
 import { createReadStream } from 'fs'
 import { chmod, readFile, readdir, stat, writeFile, rename, access } from 'fs/promises'
@@ -18,6 +19,13 @@ interface Config {
   color?: string
   /** Optional override for how often totals are POSTed. Floored at 5 minutes. */
   reportIntervalMinutes?: number
+  claudeAccountId?: string
+  /**
+   * Per-device credential for /link. Issued by the server on first report and
+   * saved here so that sign-in requests prove device identity without relying
+   * on the shared team secret.
+   */
+  linkToken?: string
 }
 
 interface FileTotals {
@@ -507,6 +515,7 @@ async function postToServer(config: Config, aggregate: Aggregate): Promise<void>
         buckets: aggregate.buckets,
         sessions: aggregate.sessions,
         ...(config.color ? { color: config.color } : {}),
+        ...(config.claudeAccountId ? { claudeAccountId: config.claudeAccountId } : {}),
       }),
       signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
     })
@@ -525,6 +534,19 @@ async function postToServer(config: Config, aggregate: Aggregate): Promise<void>
       console.log(
         `[${new Date().toLocaleTimeString()}] ${config.name}: ${aggregate.totalTokens.toLocaleString()} tokens${healthSuffix}`
       )
+      // Persist the per-device linkToken the server issues on first report.
+      // Once saved, future /link calls use this instead of the shared secret.
+      try {
+        const body = (await res.json()) as { ok?: boolean; linkToken?: string }
+        if (typeof body.linkToken === 'string' && body.linkToken && body.linkToken !== config.linkToken) {
+          config.linkToken = body.linkToken
+          await writeFile(CONFIG_PATH, JSON.stringify(config, null, 2), 'utf-8')
+          await chmod(CONFIG_PATH, 0o600)
+          console.log('Per-device link token saved to config.')
+        }
+      } catch {
+        // Non-fatal: the reporter works without it; the next report will retry.
+      }
     } else {
       console.warn(`Report returned ${res.status}`)
     }
@@ -655,6 +677,15 @@ async function loadConfig(): Promise<Config> {
     parsed.email = gitEmail.toLowerCase()
     console.log(`Config missing email; auto-filled from git config: ${parsed.email}`)
     dirty = true
+  }
+
+  if (!parsed.claudeAccountId) {
+    const account = await readClaudeAccount()
+    if (account?.accountId) {
+      parsed.claudeAccountId = account.accountId
+      console.log('Config missing claudeAccountId; read it from ~/.claude.json')
+      dirty = true
+    }
   }
 
   if (dirty) {

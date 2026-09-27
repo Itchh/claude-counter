@@ -4,7 +4,8 @@ import { useEffect, useMemo, useRef } from 'react'
 import { useFrame } from '@react-three/fiber'
 import * as THREE from 'three'
 import { useCircuit } from './CircuitContext'
-import { BOOST_THRESHOLD, speedFraction, type SimRacer } from './useRaceSim'
+import { BOOST_THRESHOLD, speedFraction, type SimFxRing, type SimRacer } from './useRaceSim'
+import { Flipbook, getExplosionSheet, getImpactSheet, type FlipbookSheet } from '../../ps1/flipbook'
 
 // Exhaust flame and tyre smoke for the whole field.
 //
@@ -70,6 +71,32 @@ const IMPACT_SIZE_START = 1.1
 const IMPACT_SIZE_END = 2.6
 /** How high off the road a flash sits: bumper height, not roof height. */
 const IMPACT_HEIGHT = 0.5
+
+/**
+ * Dust and burning oil off a car that has gone up, particles per second for
+ * the whole of the wreck — on top of the tumble's own. The fireball itself
+ * is a sprite that lasts a second; this is what keeps the wreck marked
+ * after it, and what the wide shot actually reads.
+ */
+const FLIP_SMOKE_RATE = 38
+
+// The flipbooks. Two shared sheets (see ps1/flipbook.ts), a handful of
+// sprites each, reused round-robin. The small book is the shunt and the
+// scrape; the big one is reserved for the wreck that goes up.
+/** Impact books in flight at once. Eight cars can only touch so many things. */
+const IMPACT_BOOKS = 8
+/** Explosions in flight at once. Two wrecks in one frame is already a bad day. */
+const EXPLOSION_BOOKS = 3
+/** World size of each book, square. Sized against the car, like everything. */
+const IMPACT_BOOK_SIZE = 1.2
+const EXPLOSION_BOOK_SIZE = 4
+/**
+ * Where the explosion sprite's centre sits above the car. The sheet paints
+ * its fireball two-thirds of the way down the frame, so lifting the centre
+ * by this much puts the base of the fire at the bodywork and the smoke
+ * column above it, rather than half the fireball under the road.
+ */
+const EXPLOSION_LIFT = 0.9
 
 /** How hard a car must be sliding before the tyres let go visibly. */
 const SMOKE_THRESHOLD = 0.42
@@ -295,17 +322,49 @@ function emit(
   return index
 }
 
+/**
+ * A fixed set of flipbooks and a cursor. `play` takes the next one round the
+ * ring whether or not it has finished: stealing the oldest book is invisible
+ * next to the alternative, which is a hit with no bang.
+ */
+interface BookPool {
+  readonly books: ReadonlyArray<Flipbook>
+  cursor: number
+}
+
+function createBookPool(sheet: FlipbookSheet, worldSize: number, count: number): BookPool {
+  const books: Flipbook[] = []
+  for (let index = 0; index < count; index++) books.push(new Flipbook(sheet, worldSize))
+  return { books, cursor: 0 }
+}
+
+function playBook(pool: BookPool, position: THREE.Vector3): void {
+  const book = pool.books[pool.cursor]
+  pool.cursor = (pool.cursor + 1) % pool.books.length
+  book.play(position)
+}
+
 interface RacerFxProps {
   readonly racersRef: React.RefObject<SimRacer[]>
+  /** The simulation's bangs, drained here. See SimFxRing. */
+  readonly fxRef: React.RefObject<SimFxRing>
   /** Off when the channel is not on screen, so nothing burns in the dark. */
   readonly enabled: boolean
 }
 
-export function RacerFx({ racersRef, enabled }: RacerFxProps): React.ReactElement {
+export function RacerFx({ racersRef, fxRef, enabled }: RacerFxProps): React.ReactElement {
   const circuit = useCircuit()
   const flame = useMemo(() => createPool(FLAME_POOL), [])
   const smoke = useMemo(() => createPool(SMOKE_POOL), [])
   const impact = useMemo(() => createPool(IMPACT_POOL), [])
+  const impactBooks = useMemo(
+    () => createBookPool(getImpactSheet(), IMPACT_BOOK_SIZE, IMPACT_BOOKS),
+    [],
+  )
+  const explosionBooks = useMemo(
+    () => createBookPool(getExplosionSheet(), EXPLOSION_BOOK_SIZE, EXPLOSION_BOOKS),
+    [],
+  )
 
   const sprite = useMemo(getSprite, [])
   const impactSprite = useMemo(getImpactSprite, [])
@@ -361,8 +420,11 @@ export function RacerFx({ racersRef, enabled }: RacerFxProps): React.ReactElemen
       flame.geometry.dispose()
       smoke.geometry.dispose()
       impact.geometry.dispose()
+      // Each book owns a cloned texture object and a sprite material.
+      for (const book of impactBooks.books) book.dispose()
+      for (const book of explosionBooks.books) book.dispose()
     }
-  }, [flame, smoke, impact, flameMaterial, smokeMaterial, impactMaterial])
+  }, [flame, smoke, impact, flameMaterial, smokeMaterial, impactMaterial, impactBooks, explosionBooks])
 
   // Emission carries a fractional remainder between frames. Without it a rate
   // below one particle per frame rounds to zero and the effect never fires.
@@ -371,6 +433,8 @@ export function RacerFx({ racersRef, enabled }: RacerFxProps): React.ReactElemen
   const lastBumps = useRef<number[]>([])
   const lastWalls = useRef<number[]>([])
   const lastCrashes = useRef<number[]>([])
+  /** The last simulation bang this layer has played. */
+  const lastSerial = useRef(0)
 
   const position = useMemo(() => new THREE.Vector3(), [])
   const tangent = useMemo(() => new THREE.Vector3(), [])
@@ -379,16 +443,37 @@ export function RacerFx({ racersRef, enabled }: RacerFxProps): React.ReactElemen
   // simulation — so it is sampled separately rather than borrowed.
   const contact = useMemo(() => new THREE.Vector3(), [])
   const contactTangent = useMemo(() => new THREE.Vector3(), [])
-  const drawnThisFrame = useMemo<number[]>(() => [], [])
 
   useFrame((_, delta) => {
     const dt = Math.min(delta, 0.1)
     const field = racersRef.current ?? []
-    // Contact points already flashed this frame. Reset rather than
-    // reallocated, and at most one entry per car.
-    drawnThisFrame.length = 0
 
     if (enabled) {
+      // --- the books -------------------------------------------------------
+      // Drained from the simulation's ring, not inferred from the counters:
+      // the ring knows where two cars met and which kind of wreck a crash
+      // was, and a reader that only sees the new entries plays each bang
+      // exactly once. Falling a whole ring behind loses the oldest, which
+      // can only happen if the frame loop stalled for longer than anyone
+      // was watching.
+      const ring = fxRef.current
+      if (ring) {
+        const oldest = Math.max(lastSerial.current + 1, ring.serial - ring.events.length + 1)
+        for (let serial = oldest; serial <= ring.serial; serial++) {
+          const event = ring.events[serial % ring.events.length]
+          if (event.serial !== serial) continue
+          circuit.sampleInto(event.t, event.lateral, contact, contactTangent)
+          if (event.kind === 'flip') {
+            contact.y += EXPLOSION_LIFT
+            playBook(explosionBooks, contact)
+          } else {
+            contact.y += IMPACT_HEIGHT
+            playBook(impactBooks, contact)
+          }
+        }
+        lastSerial.current = ring.serial
+      }
+
       for (let index = 0; index < field.length; index++) {
         const racer = field[index]
         circuit.sampleInto(racer.t, racer.lateral, position, tangent)
@@ -473,6 +558,12 @@ export function RacerFx({ racersRef, enabled }: RacerFxProps): React.ReactElemen
         // from the wide shot, where the roll itself is a few pixels.
         if (racer.crashTimer > 0) {
           smokeDebt.current[index] = (smokeDebt.current[index] ?? 0) + CRASH_SMOKE_RATE * dt
+          // ...and a car that went up burns as well as grinds, for as long
+          // as the wreck lasts. The fireball is over in a second; this is
+          // the column that says where it was.
+          if (racer.crashFlip !== 0) {
+            smokeDebt.current[index] += FLIP_SMOKE_RATE * dt
+          }
         }
 
         while (smokeDebt.current[index] >= 1) {
@@ -498,25 +589,18 @@ export function RacerFx({ racersRef, enabled }: RacerFxProps): React.ReactElemen
         }
 
         // --- the bang ------------------------------------------------------
-        // Drawn at the point of contact, which the simulation recorded for
-        // exactly this: a side-swipe happens at the corner of the car, and a
-        // flash at the car's centre reads as the engine going up.
+        // Sparks at the point of contact, which the simulation recorded for
+        // exactly this: a side-swipe happens at the corner of the car, and
+        // chips flying from the car's centre read as the engine going up.
+        // The stamped burst over an ordinary hit is now the impact book,
+        // played above from the simulation's ring; what stays here is the
+        // star over a wreck — the one flash big enough to want the additive
+        // white — and the sparks for everything.
         if (hitCar || hitWall || wrecked) {
           // A wreck bursts from the car itself — the crash IS the car — while
-          // an ordinary shunt flashes at the recorded point of contact.
+          // an ordinary shunt sparks at the recorded point of contact.
           if (wrecked) {
             contact.copy(position)
-          } else {
-            circuit.sampleInto(racer.impactT, racer.impactLateral, contact, contactTangent)
-          }
-          // One flash per contact, not one per car. Both cars in a shunt
-          // record the *same* point, so drawing it twice puts two additive
-          // sprites in the same place and doubles the brightness of exactly
-          // the hits that already look biggest. Whoever gets there first this
-          // frame draws it; the other one still sparks.
-          const already = !wrecked && drawnThisFrame.includes(racer.impactT)
-          if (!already) {
-            drawnThisFrame.push(racer.impactT)
             const flash = emit(
               impact,
               contact.x,
@@ -525,9 +609,11 @@ export function RacerFx({ racersRef, enabled }: RacerFxProps): React.ReactElemen
               0,
               0,
               0,
-              wrecked ? IMPACT_LIFE * 1.5 : IMPACT_LIFE,
+              IMPACT_LIFE * 1.5,
             )
-            impact.sizes[flash] = IMPACT_SIZE_START * (wrecked ? CRASH_FLASH_SCALE : 1)
+            impact.sizes[flash] = IMPACT_SIZE_START * CRASH_FLASH_SCALE
+          } else {
+            circuit.sampleInto(racer.impactT, racer.impactLateral, contact, contactTangent)
           }
 
           // Sparks. Thrown into the flame pool rather than a fourth of their
@@ -556,6 +642,11 @@ export function RacerFx({ racersRef, enabled }: RacerFxProps): React.ReactElemen
     advanceFlame(flame, dt)
     advanceSmoke(smoke, dt)
     advanceImpacts(impact, dt)
+    // The books step whether or not the channel is live, like the particles:
+    // a book left mid-frame across a pause would resume from the same frame
+    // anyway, and a finished one costs nothing to ask.
+    for (const book of impactBooks.books) book.update(dt)
+    for (const book of explosionBooks.books) book.update(dt)
   })
 
   return (
@@ -568,6 +659,14 @@ export function RacerFx({ racersRef, enabled }: RacerFxProps): React.ReactElemen
       {/* Last, so a flash sits over its own sparks and smoke rather than
           behind them — the bang is the thing being read. */}
       <points frustumCulled={false} geometry={impact.geometry} material={impactMaterial} />
+      {/* The books' sprites live at scene root for the same reason the
+          particles do: a bang happens at a place, not on a car. */}
+      {impactBooks.books.map((book) => (
+        <primitive key={book.sprite.uuid} object={book.sprite} />
+      ))}
+      {explosionBooks.books.map((book) => (
+        <primitive key={book.sprite.uuid} object={book.sprite} />
+      ))}
     </>
   )
 }

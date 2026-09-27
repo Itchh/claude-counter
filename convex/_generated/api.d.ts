@@ -8,11 +8,16 @@
  * @module
  */
 
+import type * as auth from "../auth.js";
+import type * as control from "../control.js";
 import type * as crons from "../crons.js";
 import type * as debugCounts from "../debugCounts.js";
+import type * as deviceLink from "../deviceLink.js";
+import type * as hotlaps from "../hotlaps.js";
 import type * as http from "../http.js";
 import type * as leaderboard from "../leaderboard.js";
 import type * as livery from "../livery.js";
+import type * as me from "../me.js";
 import type * as scoring from "../scoring.js";
 
 import type {
@@ -22,11 +27,16 @@ import type {
 } from "convex/server";
 
 declare const fullApi: ApiFromModules<{
+  auth: typeof auth;
+  control: typeof control;
   crons: typeof crons;
   debugCounts: typeof debugCounts;
+  deviceLink: typeof deviceLink;
+  hotlaps: typeof hotlaps;
   http: typeof http;
   leaderboard: typeof leaderboard;
   livery: typeof livery;
+  me: typeof me;
   scoring: typeof scoring;
 }>;
 

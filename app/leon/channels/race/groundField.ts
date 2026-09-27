@@ -1,5 +1,5 @@
 import * as THREE from 'three'
-import { buildTriangleGrid } from './triangleGrid'
+import { buildTriangleGrid, createGridRay, type GridRay } from './triangleGrid'
 
 // Where the ground is, answered in constant time.
 //
@@ -52,6 +52,14 @@ export interface GroundField {
    * height it already assumed.
    */
   highestBelow(x: number, z: number, y: number): number
+  /**
+   * Distance to the first ground-facing surface along a ray, or `Infinity`.
+   *
+   * The camera's question rather than the road's: everything else here reads
+   * a height column, which cannot say whether a hillside stands between the
+   * lens and the car it is filming. See triangleGrid.ts.
+   */
+  readonly firstHit: GridRay
   /** Triangles indexed. Zero means the model had no ground-facing geometry. */
   readonly size: number
 }
@@ -75,8 +83,11 @@ export function buildGroundField(root: THREE.Object3D): GroundField {
     )
   }
 
+  const firstHit = createGridRay(grid)
+
   return {
     size: grid.count,
+    firstHit,
 
     heightAt(x, z, hintY) {
       const [from, to] = grid.cellRange(x, z)
@@ -121,6 +132,7 @@ const EMPTY_FIELD: GroundField = {
   size: 0,
   heightAt: () => Number.NaN,
   highestBelow: () => Number.NaN,
+  firstHit: () => Infinity,
 }
 
 /**

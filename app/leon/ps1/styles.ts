@@ -3,6 +3,26 @@
 // perspective floor grid that fades into fog rather than into transparency.
 
 export const PS1_STYLES = `
+  /* The whole cabinet is drawn, not rendered: no font smoothing anywhere,
+     so the bitmap faces land on the pixel grid they were cut for; vector
+     instruments (dials, tallies, the timecode) rasterise with hard edges;
+     every sprite and page is nearest-sampled. A smooth curve or a grey
+     anti-aliased stem is the one thing the era could not draw. */
+  .ps1-type,
+  .ps1-type * {
+    -webkit-font-smoothing: none;
+    -moz-osx-font-smoothing: unset;
+    text-rendering: optimizeSpeed;
+    font-synthesis: none;
+  }
+  .ps1-type svg {
+    shape-rendering: crispEdges;
+  }
+  .ps1-type img,
+  .ps1-type canvas {
+    image-rendering: pixelated;
+  }
+
   .ps1-avatar {
     image-rendering: pixelated;
     display: block;
@@ -343,6 +363,289 @@ export const PS1_STYLES = `
     50% { transform: translateY(-2px); }
   }
 
+  /* =====================================================================
+     THE RANKING BOARD
+
+     The standings channel's chrome — see RANKING in theme.ts. A dark
+     chequered cloth that ripples, and five text treatments printed on it.
+     No panels: the results screens of the period set their table straight
+     onto the flag, and a frame around a row would be a box the reference
+     never drew.
+  ===================================================================== */
+
+  /* The cloth. Two-tone checker, with a band of shade scrolling across it
+     so it reads as a flag moving rather than a tiled ground. The band is a
+     hard step, not a gradient — it is the fold's shadow, drawn. */
+  .rr-cloth {
+    position: absolute;
+    inset: 0;
+    pointer-events: none;
+    background-color: #18181e;
+    background-image:
+      linear-gradient(45deg, #26262e 25%, transparent 25%, transparent 75%, #26262e 75%),
+      linear-gradient(45deg, #26262e 25%, transparent 25%, transparent 75%, #26262e 75%);
+    background-size: 64px 64px;
+    background-position: 0 0, 32px 32px;
+  }
+  .rr-cloth::after {
+    content: '';
+    position: absolute;
+    inset: -20%;
+    pointer-events: none;
+    background: repeating-linear-gradient(
+      100deg,
+      rgba(0, 0, 0, 0) 0 180px,
+      rgba(0, 0, 0, 0.28) 180px 260px,
+      rgba(255, 255, 255, 0.04) 260px 300px,
+      rgba(0, 0, 0, 0) 300px 420px
+    );
+    animation: rrRipple 9s linear infinite;
+  }
+  @keyframes rrRipple {
+    from { transform: translateX(0); }
+    to { transform: translateX(420px); }
+  }
+
+  /* The title. Gold, a highlight on top, a deep shade under, boxed in black
+     and dropped four pixels. Display weight only. */
+  .rr-gold {
+    color: #ffd24a;
+    text-transform: uppercase;
+    letter-spacing: 0.12em;
+    white-space: nowrap;
+    text-shadow:
+      0 -1px 0 #fff2a8,
+      0 2px 0 #a06a00,
+      2px 0 0 #000, -2px 0 0 #000, 0 -2px 0 #000, 0 3px 0 #000,
+      2px 3px 0 #000, -2px 3px 0 #000,
+      4px 4px 0 #000;
+  }
+  /* A small gold label: the same paint at caption size, lighter offsets. */
+  .rr-gold-sm {
+    color: #ffd24a;
+    text-transform: uppercase;
+    letter-spacing: 0.1em;
+    white-space: nowrap;
+    text-shadow: 0 1px 0 #a06a00, 1px 1px 0 #000, -1px -1px 0 #000, 1px -1px 0 #000, -1px 1px 0 #000;
+  }
+
+  /* An ordinal. Cyan, leaning, shaded from below. */
+  .rr-ordinal {
+    color: #5ce6ff;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    white-space: nowrap;
+    display: inline-block;
+    transform: skewX(-8deg);
+    font-variant-numeric: tabular-nums;
+    text-shadow:
+      0 2px 0 #0e6a8a,
+      1px 0 0 #000, -1px 0 0 #000, 0 -1px 0 #000,
+      0 3px 0 #000, 2px 3px 0 #000;
+  }
+
+  /* A figure. White, outlined, dropped. The table's workhorse. */
+  .rr-figure {
+    color: #f4f4f8;
+    letter-spacing: 0.04em;
+    white-space: nowrap;
+    font-variant-numeric: tabular-nums;
+    text-shadow:
+      1px 0 0 #000, -1px 0 0 #000, 0 1px 0 #000, 0 -1px 0 #000,
+      2px 2px 0 #000;
+  }
+
+  /* One letter of a tag. The colour comes inline; the outline is shared. */
+  .rr-letter {
+    text-transform: uppercase;
+    text-shadow:
+      1px 0 0 #000, -1px 0 0 #000, 0 1px 0 #000, 0 -1px 0 #000,
+      2px 2px 0 #000;
+  }
+
+  /* The line under the table: orange label, green value. */
+  .rr-orange {
+    color: #ff8a1a;
+    text-transform: uppercase;
+    letter-spacing: 0.1em;
+    white-space: nowrap;
+    text-shadow:
+      0 -1px 0 #ffc078,
+      0 2px 0 #8a3a00,
+      1px 0 0 #000, -1px 0 0 #000, 0 -2px 0 #000, 0 3px 0 #000,
+      2px 3px 0 #000;
+  }
+  .rr-green {
+    color: #4cff3c;
+    letter-spacing: 0.04em;
+    white-space: nowrap;
+    font-variant-numeric: tabular-nums;
+    text-shadow:
+      0 2px 0 #146a10,
+      1px 0 0 #000, -1px 0 0 #000, 0 -1px 0 #000, 0 3px 0 #000,
+      2px 3px 0 #000;
+  }
+
+  /* A row on the cloth. No frame at rest; the cursor draws one. */
+  .rr-row {
+    position: relative;
+    border: 2px solid transparent;
+  }
+
+  /* =====================================================================
+     THE GARAGE
+
+     The car select screen's chrome — see GARAGE in theme.ts. A steel bezel
+     around a picture, a lemon prompt bar under it, and a cobalt d-pad in the
+     corner. The steel is stepped, not ramped: three flat bands drawn as
+     inset offsets, which is the kit's rule (depth is an offset, never a
+     blur) applied to a frame that in the source game was a photograph of
+     metal.
+  ===================================================================== */
+
+  /* The bezel. Light along the top and left, dark along the bottom and
+     right, a hairline of black on the outside so it holds over the race. */
+  .grg-frame {
+    background: #8e8e96;
+    box-shadow:
+      0 0 0 2px #000,
+      inset 3px 3px 0 0 #d8d8dc,
+      inset -3px -3px 0 0 #45454c,
+      inset 6px 6px 0 0 #a8a8b0,
+      inset -6px -6px 0 0 #5c5c64,
+      0 12px 0 rgba(0, 0, 0, 0.5);
+  }
+  /* The picture, cut into the bezel. */
+  .grg-bezel {
+    background: #141418;
+    box-shadow:
+      inset 2px 2px 0 0 #000,
+      inset -2px -2px 0 0 #2a2a30;
+  }
+
+  /* The title over the frame: chrome, skewed, stepped in silver and black.
+     The same offsets as .arc-chrome, because the face paints its glyphs at
+     half the em — see that treatment for the measurements. */
+  .grg-title {
+    color: #ffffff;
+    text-transform: uppercase;
+    letter-spacing: 0.14em;
+    white-space: nowrap;
+    display: inline-block;
+    transform: skewX(-10deg);
+    text-shadow:
+      0 1px 0 #8a8a8a,
+      0 2px 0 #c8c8c8,
+      1px 0 0 #000, -1px 0 0 #000, 0 -1px 0 #000,
+      0 3px 0 #000,
+      2px 3px 0 #000;
+  }
+
+  /* Lemon type: the spec block, the livery word. Outlined and dropped so it
+     sits on brick and on the roller door alike. */
+  .grg-lemon {
+    color: #f2e83a;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    white-space: nowrap;
+    text-shadow:
+      1px 0 0 #000, -1px 0 0 #000, 0 1px 0 #000, 0 -1px 0 #000,
+      2px 2px 0 #000;
+  }
+  .grg-lemon-lg {
+    color: #f2e83a;
+    text-transform: uppercase;
+    letter-spacing: 0.1em;
+    white-space: nowrap;
+    text-shadow:
+      0 2px 0 #7a6a00,
+      2px 0 0 #000, -2px 0 0 #000, 0 -2px 0 #000,
+      2px 2px 0 #000, -2px 2px 0 #000,
+      4px 4px 0 #000;
+  }
+
+  /* The prompt bar. A lemon slot under the picture, ink-red text, bevelled
+     with the same two offsets as everything else. */
+  .grg-prompt {
+    background: #f2e83a;
+    color: #c01818;
+    text-transform: uppercase;
+    letter-spacing: 0.1em;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    text-align: center;
+    box-shadow:
+      inset 0 2px 0 0 #fff8a0,
+      inset 0 -2px 0 0 #a89a00,
+      0 0 0 2px #000;
+  }
+
+  /* The d-pad. A steel hub and four cobalt arrows, each a solid triangle
+     with a lighter edge on top and a darker one below. */
+  .grg-hub {
+    background: #5c5c64;
+    box-shadow:
+      inset 2px 2px 0 0 #8e8e96,
+      inset -2px -2px 0 0 #2a2a30,
+      0 0 0 2px #000;
+  }
+  /* The arrow is drawn by the pseudo-element so the button box itself can
+     be a generous hit target. */
+  .grg-arrow {
+    position: absolute;
+    border: none;
+    background: none;
+    padding: 0;
+  }
+  .grg-arrow::before {
+    content: '';
+    position: absolute;
+    width: 0;
+    height: 0;
+    filter: drop-shadow(2px 2px 0 #000);
+  }
+  .grg-arrow-left::before {
+    right: 0; top: 50%; transform: translateY(-50%);
+    border-top: 12px solid transparent;
+    border-bottom: 12px solid transparent;
+    border-right: 16px solid #2440e0;
+  }
+  .grg-arrow-right::before {
+    left: 0; top: 50%; transform: translateY(-50%);
+    border-top: 12px solid transparent;
+    border-bottom: 12px solid transparent;
+    border-left: 16px solid #2440e0;
+  }
+  .grg-arrow-up::before {
+    bottom: 0; left: 50%; transform: translateX(-50%);
+    border-left: 12px solid transparent;
+    border-right: 12px solid transparent;
+    border-bottom: 16px solid #2440e0;
+  }
+  .grg-arrow-down::before {
+    top: 0; left: 50%; transform: translateX(-50%);
+    border-left: 12px solid transparent;
+    border-right: 12px solid transparent;
+    border-top: 16px solid #2440e0;
+  }
+  .grg-arrow:hover::before { filter: drop-shadow(2px 2px 0 #000) brightness(1.35); }
+  .grg-arrow:active::before { transform-origin: center; filter: drop-shadow(0 0 0 #000) brightness(0.8); }
+  .grg-arrow:focus-visible { outline: 2px solid #f2e83a; outline-offset: 2px; }
+
+  /* A paint swatch: a hard square, framed in black, and a lemon frame when
+     it is the one on the car. */
+  .grg-swatch {
+    padding: 0;
+    border: 2px solid #000;
+    box-shadow: inset -2px -2px 0 0 rgba(0, 0, 0, 0.45), inset 2px 2px 0 0 rgba(255, 255, 255, 0.25);
+  }
+  .grg-swatch-on {
+    border-color: #f2e83a;
+    box-shadow: 0 0 0 2px #000, inset -2px -2px 0 0 rgba(0, 0, 0, 0.45);
+  }
+  .grg-swatch:focus-visible { outline: 2px solid #ffffff; outline-offset: 1px; }
+
   /* ---------------------------------------------------------------------
      Control prompt strip. The slanted bar is the era's signature: a
      parallelogram cut from a solid, never a rounded pill. The fill is flat
@@ -451,6 +754,32 @@ export const PS1_STYLES = `
   /* Condensed gold caps. Tight tracking and a hard 1px drop, which is how
      these labels were drawn — a shadow one pixel down and right, never a
      blur, so they hold over a bright sky. */
+  /* Every button in the cabinet's chrome wears the score figure's type: the
+     codec face in gold, inked with a hard outline and a dropped shadow, and
+     leaning the way the arcade's numbers lean. Backgrounds stay with the
+     site — a corner bar, a window head, a window body — and only the type
+     is shared, which is what makes them read as one machine. */
+  .arc-button {
+    font-family: var(--font-ps1-codec);
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: #ffb020;
+    text-shadow: -1px -1px 0 #000, 1px -1px 0 #000, -1px 1px 0 #000, 1px 1px 0 #000, 2px 3px 0 rgba(0, 0, 0, 0.9);
+    transform: skewX(-8deg);
+    cursor: pointer;
+    transition: filter 90ms steps(2, end), transform 90ms steps(2, end);
+  }
+  .arc-button:hover { filter: brightness(1.18); }
+  .arc-button:active { transform: skewX(-8deg) translateY(1px); }
+  .arc-button:disabled { color: #9a9aa6; cursor: default; filter: none; }
+  .arc-button:focus-visible { outline: 2px solid #ffb020; outline-offset: -2px; }
+  /* The lit state: a button standing on its own colour keeps the ink on it. */
+  .arc-button-on { color: #000; text-shadow: none; }
+  @media (prefers-reduced-motion: reduce) {
+    .arc-button { transition: none; }
+    .arc-button:active { transform: skewX(-8deg); }
+  }
+
   .gt-label {
     text-transform: uppercase;
     letter-spacing: 0.06em;

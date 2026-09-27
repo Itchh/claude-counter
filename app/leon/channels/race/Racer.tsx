@@ -8,7 +8,7 @@ import { Kart } from './Kart'
 import { NameTag } from './NameTag'
 import { useCircuit } from './CircuitContext'
 import { ROAD_CLEARANCE } from './circuit'
-import { CRASH_TUMBLE_SHARE, type SimRacer } from './useRaceSim'
+import { CRASH_TUMBLE_SHARE, FLIP_DURATION, type SimRacer } from './useRaceSim'
 
 // One kart on the track. Reads its position straight from the mutable sim
 // state each frame rather than from props, so the simulation can run at frame
@@ -55,6 +55,13 @@ const CRASH_SECOND_HOP = 0.72
 const CRASH_HOP_HEIGHT = 1.05
 /** The second bounce, as a fraction of the first. */
 const CRASH_BOUNCE_SCALE = 0.28
+/**
+ * The flip's own lift, on top of the hop. Modest: the hop already puts the
+ * roof at head height, and the flip has to read as the car being *thrown*
+ * rather than as it leaving for orbit. Together they peak at about a car's
+ * width off the road.
+ */
+const FLIP_HEIGHT = 0.6
 
 /**
  * The tumble's easing: fast off the launch, dying away as the car comes
@@ -162,6 +169,18 @@ export function Racer({
       } else if (progress < CRASH_SECOND_HOP) {
         const bounce = (progress - CRASH_FIRST_HOP) / (CRASH_SECOND_HOP - CRASH_FIRST_HOP)
         crashLift = Math.sin(bounce * Math.PI) * CRASH_HOP_HEIGHT * CRASH_BOUNCE_SCALE
+      }
+      // The flip. One whole extra revolution about the car's own length,
+      // taken at a constant rate over FLIP_DURATION from the moment of the
+      // crash — *not* eased, because the tumble underneath already is, and
+      // a snap roll laid over a decaying one is what makes the car look
+      // thrown rather than rolled. It is a whole turn, so the wreck still
+      // lands upright; its lift is a single arc that ends when it does.
+      if (racer.crashFlip !== 0) {
+        const elapsed = racer.crashDuration - racer.crashTimer
+        const flip = Math.min(1, elapsed / FLIP_DURATION)
+        crashRoll += racer.crashFlip * Math.PI * 2 * flip
+        crashLift += Math.sin(flip * Math.PI) * FLIP_HEIGHT
       }
     }
 

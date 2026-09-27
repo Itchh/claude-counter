@@ -53,9 +53,10 @@ let disposeTimer: number | null = null
 /**
  * The one context. Created on the first bake and released once the screen has
  * stopped asking — a scoreboard bakes five cars in a burst and then never
- * again until the board changes.
+ * again until the board changes. Shared with the plane and fighter bakes in
+ * rigSprite.ts, which is the point: one context for every thumbnail.
  */
-function acquireRenderer(): THREE.WebGLRenderer | null {
+export function acquireRenderer(): THREE.WebGLRenderer | null {
   if (disposeTimer !== null) {
     window.clearTimeout(disposeTimer)
     disposeTimer = null
@@ -81,7 +82,7 @@ function acquireRenderer(): THREE.WebGLRenderer | null {
   }
 }
 
-function releaseRendererSoon(): void {
+export function releaseRendererSoon(): void {
   if (disposeTimer !== null) window.clearTimeout(disposeTimer)
   disposeTimer = window.setTimeout(() => {
     renderer?.dispose()
@@ -213,43 +214,7 @@ export function bakeCarSprite(
         car.add(wheel)
       }
 
-      // Framed off the car's own box, and off its longest axis specifically:
-      // the turntable swings the length across the frame, so a shot that fits
-      // the car head-on clips it a quarter of a turn later.
-      const bounds = new THREE.Box3().setFromObject(car)
-      const centre = bounds.getCenter(new THREE.Vector3())
-      const size = bounds.getSize(new THREE.Vector3())
-      const swing = Math.max(size.x, size.z)
-      const radius = Math.max(Math.hypot(swing, size.y) / 2, 0.5)
-      const distance = (radius * CAMERA_MARGIN) / Math.tan((CAMERA_FOV * Math.PI) / 360)
-
-      // The car turns about its own centre rather than about wherever the
-      // exporter left the origin, so the shot stays put while it revolves.
-      car.position.sub(centre)
-      const pivot = new THREE.Group()
-      pivot.add(car)
-      scene.add(pivot)
-
-      const camera = new THREE.PerspectiveCamera(CAMERA_FOV, 1, 0.1, 100)
-      camera.position.set(0, radius * CAMERA_RISE, distance)
-      camera.lookAt(0, 0, 0)
-
-      const sheet = document.createElement('canvas')
-      sheet.width = FRAME_SIZE
-      sheet.height = FRAME_SIZE * SPRITE_FRAMES
-      const sheetContext = sheet.getContext('2d')
-      if (!sheetContext) throw new Error('carSprite: no 2d context for the sheet')
-
-      for (let frame = 0; frame < SPRITE_FRAMES; frame += 1) {
-        // Starting a sixth of a turn round puts the first frame — the one a
-        // still board shows — on the car's three-quarter rear, which is the
-        // angle every car select of the era opened on.
-        pivot.rotation.y = (frame / SPRITE_FRAMES) * Math.PI * 2 + Math.PI / 6
-        active.render(scene, camera)
-        sheetContext.drawImage(active.domElement, 0, frame * FRAME_SIZE)
-      }
-
-      return sheet.toDataURL('image/png')
+      return renderTurntableSheet(active, scene, car)
     } finally {
       // The scene is one bake's worth of scaffolding; the geometry and
       // textures are cached and shared, so only what was built here goes.
@@ -268,3 +233,54 @@ export function bakeCarSprite(
 
 /** The pack wheel's own radius, measured from Wheel.obj. Mirrors Kart.tsx. */
 const WHEEL_SOURCE_RADIUS = 0.4586
+
+/**
+ * Twelve frames of `subject` on a turntable, as a vertical sheet. The shot
+ * is framed off the subject's own box, and off its longest horizontal axis
+ * specifically: the turntable swings that across the frame, so a shot that
+ * fits it head-on clips it a quarter of a turn later. Shared by every rig
+ * the board can show — a car, a plane, a fighter — so the three sit at the
+ * same size and turn on the same beat.
+ */
+export function renderTurntableSheet(
+  active: THREE.WebGLRenderer,
+  scene: THREE.Scene,
+  subject: THREE.Object3D,
+  options: { readonly rise?: number; readonly firstFrame?: number } = {},
+): string {
+  const bounds = new THREE.Box3().setFromObject(subject)
+  const centre = bounds.getCenter(new THREE.Vector3())
+  const size = bounds.getSize(new THREE.Vector3())
+  const swing = Math.max(size.x, size.z)
+  const radius = Math.max(Math.hypot(swing, size.y) / 2, 0.5)
+  const distance = (radius * CAMERA_MARGIN) / Math.tan((CAMERA_FOV * Math.PI) / 360)
+
+  // The subject turns about its own centre rather than about wherever the
+  // exporter left the origin, so the shot stays put while it revolves.
+  subject.position.sub(centre)
+  const pivot = new THREE.Group()
+  pivot.add(subject)
+  scene.add(pivot)
+
+  const camera = new THREE.PerspectiveCamera(CAMERA_FOV, 1, 0.1, 100)
+  camera.position.set(0, radius * (options.rise ?? CAMERA_RISE), distance)
+  camera.lookAt(0, 0, 0)
+
+  const sheet = document.createElement('canvas')
+  sheet.width = FRAME_SIZE
+  sheet.height = FRAME_SIZE * SPRITE_FRAMES
+  const sheetContext = sheet.getContext('2d')
+  if (!sheetContext) throw new Error('carSprite: no 2d context for the sheet')
+
+  // Starting a sixth of a turn round puts the first frame — the one a still
+  // board shows — on the three-quarter rear, which is the angle every select
+  // screen of the era opened on.
+  const firstFrame = options.firstFrame ?? Math.PI / 6
+  for (let frame = 0; frame < SPRITE_FRAMES; frame += 1) {
+    pivot.rotation.y = (frame / SPRITE_FRAMES) * Math.PI * 2 + firstFrame
+    active.render(scene, camera)
+    sheetContext.drawImage(active.domElement, 0, frame * FRAME_SIZE)
+  }
+
+  return sheet.toDataURL('image/png')
+}

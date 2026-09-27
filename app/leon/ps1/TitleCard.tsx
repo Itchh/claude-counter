@@ -3,11 +3,11 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Canvas, useFrame } from '@react-three/fiber'
 import * as THREE from 'three'
-import { createFlagTexture } from './flagTexture'
+import { CLOTH_LAYOUTS, createFlagTexture } from './flagTexture'
 import { createCloudBandDataUrl } from './cloudBand'
 import { LoadingBar } from './LoadingBar'
 import { NewGenreMark } from './NewGenreMark'
-import { skyGradient, type TitleSpec } from './titleSpecs'
+import { skyGradient, type ShapeKind, type TitleSpec } from './titleSpecs'
 import { PS1 } from './theme'
 
 // One title card, two jobs.
@@ -37,25 +37,58 @@ const FONT_WAIT_MS = 4000
 const MINIMUM_HOLD_MS = 1100
 const ATTRACT_HOLD_MS = 2000
 const DISMISS_MS = 520
-const FLAG_WIDTH = 4.6
-const FLAG_HEIGHT = 3.45
-const FLAG_SEGMENTS_X = 40
-const FLAG_SEGMENTS_Y = 30
+/**
+ * World units per baked texel. The racer's flag set this — 4.6 units across a
+ * 1024-wide sheet — and every other shape is sized off the same ratio, so the
+ * pixel crawl is the same density whether the card is a flag, a banner or a
+ * panel.
+ */
+const UNITS_PER_TEXEL = 4.6 / 1024
+/** Texels per mesh segment; the flag's 40 x 30 grid, carried to the others. */
+const TEXELS_PER_SEGMENT = 25.6
 const CODEC_FAMILY = '"MGS1 Codec", monospace'
 
-const FLAG_VERTEX_SHADER = /* glsl */ `
+// How each shape idles. A flag streams; a banner swings from its rail like a
+// pendulum with a little cloth lag; a panel is rigid and rocks with the
+// engine ticking over behind it.
+const FLAG_YAW = 0.07
+const FLAG_ROLL = 0.018
+const BANNER_YAW = 0.05
+const PANEL_ROLL = 0.035
+const PANEL_PITCH = 0.03
+const PANEL_YAW = 0.06
+const PANEL_ENGINE_HZ = 38
+const PANEL_ENGINE_SHAKE = 0.005
+
+// One vertex program per shape. They share the head and the tail — the UV
+// pass-through, the vertex snap — and differ only in how the sheet moves and
+// how that movement is turned into light.
+const VERTEX_HEAD = /* glsl */ `
   uniform float uTime;
+  uniform vec2 uHalf;
   varying vec2 vUv;
   varying float vShade;
 
   void main() {
     vUv = uv;
     vec3 pos = position;
+`
 
+// Integer vertex snapping — the console had no subpixel precision, and the
+// resulting jitter along the field edges is the signature of the era.
+const VERTEX_TAIL = /* glsl */ `
+    vec4 clip = projectionMatrix * modelViewMatrix * vec4(pos, 1.0);
+    float grid = 180.0;
+    clip.xy = floor(clip.xy / clip.w * grid) / grid * clip.w;
+    gl_Position = clip;
+  }
+`
+
+const FLAG_MOTION = /* glsl */ `
     // Two ripples of different wavelength travelling across the cloth, damped
     // towards the left and right edges so it reads as pinned rather than
     // floating free.
-    float edge = 1.0 - pow(abs(pos.x) / (${(FLAG_WIDTH / 2).toFixed(2)}), 3.0);
+    float edge = 1.0 - pow(abs(pos.x) / uHalf.x, 3.0);
     float wave =
       sin(pos.x * 1.9 + uTime * 2.1) * 0.30 +
       sin(pos.x * 3.7 - pos.y * 1.1 + uTime * 3.0) * 0.13 +
@@ -68,58 +101,122 @@ const FLAG_VERTEX_SHADER = /* glsl */ `
       cos(pos.x * 1.9 + uTime * 2.1) * 1.9 * 0.30 +
       cos(pos.x * 3.7 - pos.y * 1.1 + uTime * 3.0) * 3.7 * 0.13;
     vShade = clamp(0.86 + slope * 0.24, 0.58, 1.24);
-
-    vec4 clip = projectionMatrix * modelViewMatrix * vec4(pos, 1.0);
-
-    // Integer vertex snapping — the console had no subpixel precision, and the
-    // resulting jitter along the field edges is the signature of the era.
-    float grid = 180.0;
-    clip.xy = floor(clip.xy / clip.w * grid) / grid * clip.w;
-    gl_Position = clip;
-  }
 `
 
-const FLAG_FRAGMENT_SHADER = /* glsl */ `
+const BANNER_MOTION = /* glsl */ `
+    // Hung from the rail: the top edge never moves, and everything under it
+    // swings as one slow pendulum. The hem is weighted, so the cloth does not
+    // flutter — it lags a little behind the swing and settles.
+    float drop = clamp((uHalf.y - pos.y) / (2.0 * uHalf.y), 0.0, 1.0);
+    float swing = sin(uTime * 0.85) * 0.055 + sin(uTime * 1.6 + 1.3) * 0.012;
+    float lag = drop * (1.0 + 0.35 * drop);
+    pos.x += swing * lag * 2.0 * uHalf.y;
+
+    // A single soft belly travelling down the drape, and a faint side-to-side
+    // bow that grows towards the hem. No cross-wind ripple.
+    float belly = sin(drop * 2.6 - uTime * 1.1) * 0.10 * drop;
+    float bow = sin(pos.x * 1.6 + uTime * 0.7) * 0.03 * drop;
+    pos.z += belly + bow;
+
+    float slope = cos(drop * 2.6 - uTime * 1.1) * 2.6 * 0.10 * drop;
+    vShade = clamp(0.88 + slope * 0.30 - drop * 0.06, 0.62, 1.18);
+`
+
+const PANEL_MOTION = /* glsl */ `
+    // Rigid: nothing bends. The only life in the surface is a sheen sliding
+    // across the paint as the panel rocks under the light.
+    float sheen = smoothstep(0.78, 1.0, sin(pos.x * 0.9 + pos.y * 0.55 - uTime * 0.5));
+    vShade = 0.94 + sheen * 0.18;
+`
+
+const SHAPE_MOTION: Readonly<Record<ShapeKind, string>> = {
+  flag: FLAG_MOTION,
+  banner: BANNER_MOTION,
+  panel: PANEL_MOTION,
+}
+
+function vertexShaderFor(shape: ShapeKind): string {
+  return VERTEX_HEAD + SHAPE_MOTION[shape] + VERTEX_TAIL
+}
+
+// The alpha test is what cuts the banner's rail and the panel's corners out
+// of their rectangular sheets. A flag's sheet is fully opaque and never
+// trips it, so the racer looks exactly as it did.
+const FRAGMENT_SHADER = /* glsl */ `
   uniform sampler2D uMap;
   varying vec2 vUv;
   varying float vShade;
 
   void main() {
-    vec3 colour = texture2D(uMap, vUv).rgb * vShade;
+    vec4 texel = texture2D(uMap, vUv);
+    if (texel.a < 0.5) discard;
+    vec3 colour = texel.rgb * vShade;
     // 15-bit colour: five bits a channel, so the banding is real, not filtered.
     colour = floor(colour * 31.0 + 0.5) / 31.0;
     gl_FragColor = vec4(colour, 1.0);
   }
 `
 
-function Flag({ texture }: { readonly texture: THREE.Texture }): React.ReactElement {
+interface ClothProps {
+  readonly texture: THREE.Texture
+  readonly shape: ShapeKind
+}
+
+function Cloth({ texture, shape }: ClothProps): React.ReactElement {
   const materialRef = useRef<THREE.ShaderMaterial>(null)
   const meshRef = useRef<THREE.Mesh>(null)
 
+  const layout = CLOTH_LAYOUTS[shape]
+  const width = layout.width * UNITS_PER_TEXEL
+  const height = layout.height * UNITS_PER_TEXEL
+  const segmentsX = Math.round(layout.width / TEXELS_PER_SEGMENT)
+  const segmentsY = Math.round(layout.height / TEXELS_PER_SEGMENT)
+
   const uniforms = useMemo(
-    () => ({ uTime: { value: 0 }, uMap: { value: texture } }),
-    [texture],
+    () => ({
+      uTime: { value: 0 },
+      uMap: { value: texture },
+      uHalf: { value: new THREE.Vector2(width / 2, height / 2) },
+    }),
+    [texture, width, height],
   )
+
+  const vertexShader = useMemo(() => vertexShaderFor(shape), [shape])
 
   useFrame((_state, delta) => {
     if (materialRef.current !== null) {
       materialRef.current.uniforms.uTime.value += delta
     }
-    if (meshRef.current !== null) {
-      const time = uniforms.uTime.value
-      meshRef.current.rotation.y = Math.sin(time * 0.42) * 0.07
-      meshRef.current.rotation.z = Math.sin(time * 0.31) * 0.018
+    const mesh = meshRef.current
+    if (mesh === null) return
+    const time = uniforms.uTime.value
+
+    if (shape === 'flag') {
+      mesh.rotation.y = Math.sin(time * 0.42) * FLAG_YAW
+      mesh.rotation.z = Math.sin(time * 0.31) * FLAG_ROLL
+    } else if (shape === 'banner') {
+      // The swing itself lives in the shader so the rail stays put; the mesh
+      // only turns a little in the hall's draught.
+      mesh.rotation.y = Math.sin(time * 0.37) * BANNER_YAW
+    } else {
+      // Idling aircraft: a slow rock on two axes with the engine's tremor
+      // riding on top of it, too small to see as motion and just big enough
+      // to keep the rivets alive.
+      mesh.rotation.z = Math.sin(time * 0.9) * PANEL_ROLL
+      mesh.rotation.x = Math.sin(time * 0.6 + 0.8) * PANEL_PITCH
+      mesh.rotation.y = Math.sin(time * 0.45) * PANEL_YAW
+      mesh.position.y = Math.sin(time * PANEL_ENGINE_HZ) * PANEL_ENGINE_SHAKE
     }
   })
 
   return (
     <mesh ref={meshRef}>
-      <planeGeometry args={[FLAG_WIDTH, FLAG_HEIGHT, FLAG_SEGMENTS_X, FLAG_SEGMENTS_Y]} />
+      <planeGeometry args={[width, height, segmentsX, segmentsY]} />
       <shaderMaterial
         ref={materialRef}
         uniforms={uniforms}
-        vertexShader={FLAG_VERTEX_SHADER}
-        fragmentShader={FLAG_FRAGMENT_SHADER}
+        vertexShader={vertexShader}
+        fragmentShader={FRAGMENT_SHADER}
         side={THREE.DoubleSide}
       />
     </mesh>
@@ -293,7 +390,7 @@ export function TitleCard({
           gl={{ antialias: false, alpha: true }}
           style={{ position: 'absolute', inset: 0 }}
         >
-          {texture !== null ? <Flag texture={texture} /> : null}
+          {texture !== null ? <Cloth texture={texture} shape={spec.shape} /> : null}
         </Canvas>
       </div>
 

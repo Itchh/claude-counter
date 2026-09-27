@@ -1,0 +1,694 @@
+{
+  "stages": [
+    {
+      "slug": "kings-chamber",
+      "triangles": 21443,
+      "bounds": {
+        "min": [
+          -30.31,
+          -4.49,
+          -24.17
+        ],
+        "max": [
+          69.31,
+          13.68,
+          27.66
+        ]
+      },
+      "line": {
+        "extent": {
+          "minX": -6.75,
+          "maxX": 8.5
+        },
+        "step": 0.25,
+        "floors": [
+          -0.036,
+          -0.062,
+          -0.095,
+          -0.129,
+          -0.128,
+          -0.131,
+          -0.137,
+          -0.143,
+          -0.15,
+          -0.143,
+          -0.124,
+          -0.104,
+          0.044,
+          0.042,
+          0.04,
+          -0.049,
+          -0.025,
+          -0.002,
+          0.02,
+          0.143,
+          0.148,
+          0.17,
+          0.125,
+          0.14,
+          0.135,
+          0.128,
+          0.122,
+          0.115,
+          0.124,
+          0.134,
+          0.128,
+          0.11,
+          0.086,
+          0.26,
+          0.237,
+          0.215,
+          0,
+          -0.02,
+          -0.049,
+          -0.083,
+          -0.118,
+          -0.133,
+          -0.148,
+          -0.046,
+          -0.047,
+          -0.059,
+          -0.128,
+          -0.119,
+          -0.11,
+          -0.101,
+          -0.092,
+          0.061,
+          0.053,
+          0.045,
+          -0.027,
+          -0.003,
+          0.023,
+          0.049,
+          0.075,
+          0.098,
+          0.121,
+          0.273,
+          0.272,
+          0.271,
+          0.139,
+          0.128,
+          0.118,
+          0.27,
+          0.272,
+          0.276,
+          0.063,
+          0.044,
+          0.229
+        ]
+      },
+      "materials": [
+        {
+          "name": "left_vaze_line__0",
+          "alphaMode": "OPAQUE",
+          "doubleSided": true,
+          "textured": false
+        },
+        {
+          "name": "sand_7",
+          "alphaMode": "OPAQUE",
+          "doubleSided": true,
+          "textured": true
+        },
+        {
+          "name": "first_hallway",
+          "alphaMode": "OPAQUE",
+          "doubleSided": true,
+          "textured": true
+        },
+        {
+          "name": "ceiling_halll_midle",
+          "alphaMode": "OPAQUE",
+          "doubleSided": true,
+          "textured": true
+        },
+        {
+          "name": "wall_hall_left",
+          "alphaMode": "OPAQUE",
+          "doubleSided": true,
+          "textured": true
+        },
+        {
+          "name": "wall_hall_right",
+          "alphaMode": "OPAQUE",
+          "doubleSided": true,
+          "textured": true
+        },
+        {
+          "name": "ceiling_hall_side",
+          "alphaMode": "OPAQUE",
+          "doubleSided": true,
+          "textured": true
+        },
+        {
+          "name": "colum_left",
+          "alphaMode": "OPAQUE",
+          "doubleSided": true,
+          "textured": true
+        },
+        {
+          "name": "left__room_hallway",
+          "alphaMode": "OPAQUE",
+          "doubleSided": true,
+          "textured": true
+        },
+        {
+          "name": "left_room",
+          "alphaMode": "OPAQUE",
+          "doubleSided": true,
+          "textured": true
+        },
+        {
+          "name": "wall_hall_face",
+          "alphaMode": "OPAQUE",
+          "doubleSided": true,
+          "textured": true
+        },
+        {
+          "name": "right_room",
+          "alphaMode": "OPAQUE",
+          "doubleSided": true,
+          "textured": true
+        },
+        {
+          "name": "middle_room_hallway",
+          "alphaMode": "OPAQUE",
+          "doubleSided": true,
+          "textured": true
+        },
+        {
+          "name": "main_room",
+          "alphaMode": "OPAQUE",
+          "doubleSided": true,
+          "textured": true
+        },
+        {
+          "name": "right_room_hallway",
+          "alphaMode": "OPAQUE",
+          "doubleSided": true,
+          "textured": true
+        },
+        {
+          "name": "middle_hallway",
+          "alphaMode": "OPAQUE",
+          "doubleSided": true,
+          "textured": true
+        },
+        {
+          "name": "column_right",
+          "alphaMode": "OPAQUE",
+          "doubleSided": true,
+          "textured": true
+        },
+        {
+          "name": "right_stand",
+          "alphaMode": "OPAQUE",
+          "doubleSided": true,
+          "textured": true
+        },
+        {
+          "name": "left_vaze",
+          "alphaMode": "OPAQUE",
+          "doubleSided": true,
+          "textured": true
+        },
+        {
+          "name": "Material_27",
+          "alphaMode": "OPAQUE",
+          "doubleSided": true,
+          "textured": false
+        },
+        {
+          "name": "Material_26",
+          "alphaMode": "OPAQUE",
+          "doubleSided": true,
+          "textured": false
+        },
+        {
+          "name": "right_vaze",
+          "alphaMode": "OPAQUE",
+          "doubleSided": true,
+          "textured": true
+        },
+        {
+          "name": "vaze2",
+          "alphaMode": "OPAQUE",
+          "doubleSided": true,
+          "textured": true
+        },
+        {
+          "name": "vaze_1",
+          "alphaMode": "OPAQUE",
+          "doubleSided": true,
+          "textured": true
+        },
+        {
+          "name": "vaze_4",
+          "alphaMode": "OPAQUE",
+          "doubleSided": true,
+          "textured": true
+        },
+        {
+          "name": "vaze3",
+          "alphaMode": "OPAQUE",
+          "doubleSided": true,
+          "textured": true
+        },
+        {
+          "name": "vaze_main_room",
+          "alphaMode": "OPAQUE",
+          "doubleSided": true,
+          "textured": true
+        },
+        {
+          "name": "Ramses_II_head",
+          "alphaMode": "OPAQUE",
+          "doubleSided": true,
+          "textured": true
+        },
+        {
+          "name": "Nefertiti_head",
+          "alphaMode": "OPAQUE",
+          "doubleSided": true,
+          "textured": true
+        },
+        {
+          "name": "left_stand",
+          "alphaMode": "OPAQUE",
+          "doubleSided": true,
+          "textured": true
+        },
+        {
+          "name": "right_hallway_border",
+          "alphaMode": "OPAQUE",
+          "doubleSided": true,
+          "textured": true
+        },
+        {
+          "name": "left_hallway_border",
+          "alphaMode": "OPAQUE",
+          "doubleSided": true,
+          "textured": true
+        },
+        {
+          "name": "sand_hall",
+          "alphaMode": "OPAQUE",
+          "doubleSided": true,
+          "textured": true
+        },
+        {
+          "name": "sand5",
+          "alphaMode": "OPAQUE",
+          "doubleSided": true,
+          "textured": true
+        },
+        {
+          "name": "sand4",
+          "alphaMode": "OPAQUE",
+          "doubleSided": true,
+          "textured": true
+        },
+        {
+          "name": "sand3",
+          "alphaMode": "OPAQUE",
+          "doubleSided": true,
+          "textured": true
+        },
+        {
+          "name": "sand_2",
+          "alphaMode": "OPAQUE",
+          "doubleSided": true,
+          "textured": true
+        },
+        {
+          "name": "sand_1",
+          "alphaMode": "OPAQUE",
+          "doubleSided": true,
+          "textured": true
+        },
+        {
+          "name": "Plane014",
+          "alphaMode": "OPAQUE",
+          "doubleSided": true,
+          "textured": true
+        },
+        {
+          "name": "Box001",
+          "alphaMode": "OPAQUE",
+          "doubleSided": true,
+          "textured": true
+        },
+        {
+          "name": "wood_hall001",
+          "alphaMode": "OPAQUE",
+          "doubleSided": true,
+          "textured": true
+        },
+        {
+          "name": "wood_hall",
+          "alphaMode": "OPAQUE",
+          "doubleSided": true,
+          "textured": true
+        },
+        {
+          "name": "wood_side",
+          "alphaMode": "OPAQUE",
+          "doubleSided": true,
+          "textured": true
+        },
+        {
+          "name": "wood_ground_near",
+          "alphaMode": "OPAQUE",
+          "doubleSided": true,
+          "textured": true
+        },
+        {
+          "name": "stair",
+          "alphaMode": "OPAQUE",
+          "doubleSided": true,
+          "textured": true
+        },
+        {
+          "name": "wall_stair_right",
+          "alphaMode": "OPAQUE",
+          "doubleSided": true,
+          "textured": true
+        },
+        {
+          "name": "shovel",
+          "alphaMode": "OPAQUE",
+          "doubleSided": true,
+          "textured": true
+        },
+        {
+          "name": "ground_near",
+          "alphaMode": "OPAQUE",
+          "doubleSided": true,
+          "textured": true
+        },
+        {
+          "name": "eagle_lobby",
+          "alphaMode": "OPAQUE",
+          "doubleSided": true,
+          "textured": true
+        },
+        {
+          "name": "cube1",
+          "alphaMode": "OPAQUE",
+          "doubleSided": true,
+          "textured": true
+        },
+        {
+          "name": "cube5",
+          "alphaMode": "OPAQUE",
+          "doubleSided": true,
+          "textured": true
+        },
+        {
+          "name": "cube4",
+          "alphaMode": "OPAQUE",
+          "doubleSided": true,
+          "textured": true
+        },
+        {
+          "name": "cube3",
+          "alphaMode": "OPAQUE",
+          "doubleSided": true,
+          "textured": true
+        },
+        {
+          "name": "cube2",
+          "alphaMode": "OPAQUE",
+          "doubleSided": true,
+          "textured": true
+        },
+        {
+          "name": "closed_door",
+          "alphaMode": "OPAQUE",
+          "doubleSided": true,
+          "textured": true
+        },
+        {
+          "name": "lines",
+          "alphaMode": "OPAQUE",
+          "doubleSided": true,
+          "textured": true
+        }
+      ]
+    },
+    {
+      "slug": "moss-shrine",
+      "triangles": 25051,
+      "bounds": {
+        "min": [
+          -32.49,
+          -1.17,
+          -20.49
+        ],
+        "max": [
+          28.49,
+          37.37,
+          40.49
+        ]
+      },
+      "line": {
+        "extent": {
+          "minX": -8.5,
+          "maxX": 8.5
+        },
+        "step": 0.25,
+        "floors": [
+          0.453,
+          0.407,
+          0.361,
+          0.314,
+          0.268,
+          0.222,
+          0.175,
+          0.129,
+          0.083,
+          0.037,
+          -0.01,
+          -0.056,
+          -0.102,
+          -0.146,
+          -0.177,
+          -0.204,
+          -0.224,
+          -0.244,
+          -0.257,
+          -0.269,
+          -0.28,
+          -0.28,
+          -0.28,
+          -0.28,
+          -0.28,
+          -0.28,
+          -0.28,
+          -0.28,
+          -0.28,
+          -0.28,
+          -0.28,
+          -0.283,
+          -0.288,
+          -0.292,
+          -0.194,
+          -0.094,
+          0,
+          -0.038,
+          -0.077,
+          -0.115,
+          -0.153,
+          -0.192,
+          -0.181,
+          -0.156,
+          -0.132,
+          -0.107,
+          -0.083,
+          -0.058,
+          -0.033,
+          -0.009,
+          0.016,
+          0.04,
+          0.065,
+          0.09,
+          0.114,
+          0.139,
+          0.163,
+          0.188,
+          0.213,
+          0.237,
+          0.262,
+          0.286,
+          0.311,
+          0.336,
+          0.36,
+          0.385,
+          0.409,
+          0.434,
+          0.459,
+          0.483,
+          0.508,
+          0.532,
+          0.557
+        ]
+      },
+      "materials": [
+        {
+          "name": "Plane.007__0",
+          "alphaMode": "OPAQUE",
+          "doubleSided": true,
+          "textured": false
+        },
+        {
+          "name": "material",
+          "alphaMode": "MASK",
+          "doubleSided": true,
+          "textured": true
+        },
+        {
+          "name": "material_2",
+          "alphaMode": "MASK",
+          "doubleSided": true,
+          "textured": true
+        },
+        {
+          "name": "material_3",
+          "alphaMode": "OPAQUE",
+          "doubleSided": true,
+          "textured": true
+        },
+        {
+          "name": "material_4",
+          "alphaMode": "OPAQUE",
+          "doubleSided": true,
+          "textured": true
+        },
+        {
+          "name": "material_5",
+          "alphaMode": "MASK",
+          "doubleSided": true,
+          "textured": true
+        },
+        {
+          "name": "Material",
+          "alphaMode": "OPAQUE",
+          "doubleSided": true,
+          "textured": true
+        },
+        {
+          "name": "material_7",
+          "alphaMode": "OPAQUE",
+          "doubleSided": true,
+          "textured": true
+        }
+      ]
+    },
+    {
+      "slug": "temple-of-winds",
+      "triangles": 20518,
+      "bounds": {
+        "min": [
+          -18.27,
+          -0.23,
+          -46.3
+        ],
+        "max": [
+          21.71,
+          10.82,
+          6.23
+        ]
+      },
+      "line": {
+        "extent": {
+          "minX": -8.5,
+          "maxX": 8.5
+        },
+        "step": 0.25,
+        "floors": [
+          0.141,
+          0.169,
+          0.14,
+          0.165,
+          0.165,
+          0.157,
+          0.148,
+          0.139,
+          0.13,
+          0.121,
+          0.115,
+          0.11,
+          0.105,
+          0.1,
+          0.095,
+          0.09,
+          0.084,
+          0.079,
+          0.074,
+          0.069,
+          0.064,
+          0.059,
+          0.054,
+          0.048,
+          0.042,
+          0.036,
+          0.03,
+          0.024,
+          0.018,
+          0.01,
+          0.001,
+          -0.004,
+          -0.003,
+          -0.003,
+          -0.002,
+          -0.002,
+          0,
+          0.004,
+          0.008,
+          0.011,
+          0.015,
+          0.019,
+          0.023,
+          0.024,
+          0.026,
+          0.028,
+          0.029,
+          0.031,
+          0.033,
+          0.034,
+          0.036,
+          0.037,
+          0.039,
+          0.041,
+          0.042,
+          0.044,
+          0.052,
+          0.062,
+          0.071,
+          0.076,
+          0.081,
+          0.084,
+          0.087,
+          0.09,
+          0.093,
+          0.101,
+          0.108,
+          0.116,
+          0.123,
+          0.131,
+          0.146,
+          0.163,
+          0.179
+        ]
+      },
+      "materials": [
+        {
+          "name": "Material",
+          "alphaMode": "OPAQUE",
+          "doubleSided": true,
+          "textured": true
+        }
+      ]
+    }
+  ]
+}

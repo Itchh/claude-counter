@@ -306,6 +306,16 @@ export interface RacerState {
   /** The paint shop's choices, null for a driver who has never opened it. */
   readonly paint: string | null
   readonly livery: string | null
+  /** Chosen chassis index, null until chosen — the key is hashed instead. */
+  readonly chassis: number | null
+  /** The hangar's choices, null until the pilot has opened it. */
+  readonly airframe: number | null
+  readonly planePaint: string | null
+  readonly planeLivery: string | null
+  /** The dojo's choices, null until the fighter has opened it. */
+  readonly fighter: number | null
+  readonly fightPaint: string | null
+  readonly fightLivery: string | null
   readonly rank: number
   readonly score: number
   readonly rawTokens: number
@@ -367,6 +377,13 @@ export const getRace = query({
         color: row.color ?? null,
         paint: user?.paint ?? null,
         livery: user?.livery ?? null,
+        chassis: user?.chassis ?? null,
+        airframe: user?.airframe ?? null,
+        planePaint: user?.planePaint ?? null,
+        planeLivery: user?.planeLivery ?? null,
+        fighter: user?.fighter ?? null,
+        fightPaint: user?.fightPaint ?? null,
+        fightLivery: user?.fightLivery ?? null,
         rank: i + 1,
         score: row.score,
         rawTokens: row.rawTokens,

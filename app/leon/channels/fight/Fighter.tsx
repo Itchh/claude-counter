@@ -1,423 +1,299 @@
 'use client'
 
-import { useMemo, useRef } from 'react'
+import { Suspense, useEffect, useMemo, useRef, useState } from 'react'
 import { useFrame } from '@react-three/fiber'
+import { useGLTF } from '@react-three/drei'
 import * as THREE from 'three'
-import { createPs1Material } from '../race/Ps1Material'
-import { liveryShaderId } from '@/lib/livery'
-import { ARENA_FOG_FAR, ARENA_FOG_NEAR, ARENA_SKY } from './arena'
-import type { SimFighter } from './useFightSim'
+import { clone as cloneSkeleton } from 'three/examples/jsm/utils/SkeletonUtils.js'
+import { configurePs1Texture, createPs1Material, sourceMaterialOf } from '../race/Ps1Material'
+import { liveryShaderId, PAINT_STRENGTH } from '@/lib/livery'
+import { CLIP_FOR_ACTION, clipTimeScale, fighterFor, fighterModelUrls, fighterOf, pickClip } from './fighters'
+import type { FighterAction, SimFighter } from './useFightSim'
 
-// A fighter, built rather than downloaded. The era's character was ~350
-// vertices of hard boxes and the reader does the rest; a rigged glTF with an
-// animation library would cost a pipeline and buy smoothness this channel is
-// actively trying not to have. Every part is a box, every joint is a nested
-// group, and every pose is a handful of Euler targets damped toward — which
-// is honestly how the period's idle stances read anyway.
+// A fighter, as a picture: the baked sculpt from the roster, skinned onto
+// the shared skeleton, every material it shipped with thrown away and
+// rebuilt in the channel's own shader, the owner's gi colour and pattern on
+// its chest, and its clips driven by the simulation's action rather than by
+// a clock of their own. Drawn in the ring and on the dojo's turntable by
+// this one component, for the same reason the car has one Kart: a select
+// screen that shows you a different fighter from the one who then walks
+// out is lying.
 //
-// The model is authored facing +x. The right-side fighter's root group is
-// yawed PI so the same skeleton fights both ways.
+// The clips are not crossfaded so much as cut: a strike arrives in a
+// twelfth of a second and leaves as fast, which is how the era's fighters
+// moved and also what keeps the simulation's strike frame — the moment the
+// spark fires and the world freezes — landing on the frame the fist
+// actually reaches out. Each strike clip is played at whatever speed puts
+// its measured hit on that frame; see clipTimeScale. Short as the blend is,
+// it is always a blend: the outgoing clip fades under the incoming one, so
+// there is never a frame of nothing — a rig with no clip on it is a T-pose,
+// and a T-pose is the one thing the picture can never show.
+//
+// Which variant plays is the simulation's call when it has made one (a
+// strike's reach depends on it) and this component's otherwise.
 
-const SKIN = '#d9a878'
-const HAIR = '#1b1410'
-
-/** Segment sizes, world units. A fighter stands ~1.8 tall. */
-const SIZES = {
-  pelvis: [0.42, 0.26, 0.3],
-  torso: [0.5, 0.62, 0.34],
-  head: [0.26, 0.3, 0.28],
-  hair: [0.28, 0.14, 0.3],
-  upperArm: [0.36, 0.16, 0.16],
-  forearm: [0.34, 0.15, 0.15],
-  fist: [0.16, 0.17, 0.17],
-  thigh: [0.19, 0.5, 0.22],
-  shin: [0.16, 0.48, 0.18],
-  foot: [0.3, 0.1, 0.14],
-} as const
-
-const HIP_Y = 0.98
-const SHOULDER_Y = 0.5
-const SHOULDER_Z = 0.28
-
-interface JointPose {
-  readonly torsoLean: number
-  readonly torsoTwist: number
-  readonly headPitch: number
-  /** Near arm = the one facing the opponent (z+ authored side). */
-  readonly nearShoulder: readonly [number, number, number]
-  readonly nearElbow: number
-  readonly farShoulder: readonly [number, number, number]
-  readonly farElbow: number
-  readonly nearHip: number
-  readonly nearKnee: number
-  readonly farHip: number
-  readonly farKnee: number
-  /** Whole-body: crouch (root drop), pitch (fall), rootY extra. */
-  readonly crouch: number
-  readonly bodyPitch: number
-}
-
-const GUARD: JointPose = {
-  torsoLean: 0.12,
-  torsoTwist: -0.35,
-  headPitch: 0.05,
-  nearShoulder: [0, -0.5, -0.9],
-  nearElbow: -1.9,
-  farShoulder: [0, -0.9, -0.7],
-  farElbow: -2.1,
-  nearHip: 0.35,
-  nearKnee: -0.55,
-  farHip: -0.25,
-  farKnee: -0.35,
-  crouch: 0.1,
-  bodyPitch: 0,
-}
-
-function lerp(a: number, b: number, t: number): number {
-  return a + (b - a) * t
-}
-
-/** A strike's arc: out fast, back slower. 0..1 over the action. */
-function strikeArc(t: number): number {
-  return Math.sin(Math.min(1, Math.max(0, t)) * Math.PI)
-}
-
+/** How fast one clip gives way to the next, in seconds. Short: a cut. */
+const CLIP_BLEND_S = 0.07
+/** The sculpts face +z; a fighter on the left faces +x, on the right -x. */
+const FACING_LEFT = Math.PI / 2
 /**
- * The pose for an action at a moment. Derived rather than keyframed in data:
- * five actions of a few joints each reads better as arithmetic than as a
- * table of magic numbers with no names.
+ * The gi: the box on the bind-pose body that takes the owner's paint and
+ * pattern. Hips to shoulders, the width of the torso. Everything outside
+ * it — face, hands, boots — keeps the page's own colours, which is what
+ * makes a respray read as a costume and not as a tint over the whole
+ * person.
  */
-function poseFor(action: SimFighter['action'], t: number, elapsed: number): JointPose {
-  const bob = Math.sin(elapsed * 2.6) * 0.02
-  switch (action) {
-    case 'punch': {
-      const arc = strikeArc(t / 0.46)
-      return {
-        ...GUARD,
-        torsoTwist: lerp(GUARD.torsoTwist, 0.55, arc),
-        torsoLean: lerp(GUARD.torsoLean, 0.28, arc),
-        nearShoulder: [0, lerp(-0.5, 0.1, arc), lerp(-0.9, -0.05, arc)],
-        nearElbow: lerp(-1.9, -0.08, arc),
-        crouch: GUARD.crouch + bob,
-      }
-    }
-    case 'kick': {
-      const arc = strikeArc(t / 0.46)
-      return {
-        ...GUARD,
-        torsoLean: lerp(GUARD.torsoLean, -0.32, arc),
-        nearHip: lerp(GUARD.nearHip, 1.6, arc),
-        nearKnee: lerp(GUARD.nearKnee, -0.15, arc),
-        farKnee: lerp(GUARD.farKnee, -0.55, arc),
-        crouch: GUARD.crouch + 0.06 * arc,
-      }
-    }
-    case 'hit': {
-      const arc = strikeArc(t / 0.42)
-      return {
-        ...GUARD,
-        torsoLean: lerp(GUARD.torsoLean, -0.5, arc),
-        headPitch: lerp(GUARD.headPitch, -0.45, arc),
-        nearShoulder: [0, -0.3, lerp(-0.9, -1.4, arc)],
-        farShoulder: [0, -0.6, lerp(-0.7, -1.3, arc)],
-        crouch: GUARD.crouch + 0.05 * arc,
-        bodyPitch: -0.12 * arc,
-      }
-    }
-    case 'block': {
-      const arc = strikeArc(t / 0.42)
-      return {
-        ...GUARD,
-        nearShoulder: [0, -0.2, lerp(-0.9, -1.5, arc)],
-        nearElbow: lerp(-1.9, -2.4, arc),
-        farShoulder: [0, -0.3, lerp(-0.7, -1.45, arc)],
-        farElbow: lerp(-2.1, -2.4, arc),
-        crouch: GUARD.crouch + 0.08 * arc,
-      }
-    }
-    case 'ko': {
-      // The fall: pitch back over the first half-second, then stay down.
-      const fall = Math.min(1, t / 0.55)
-      return {
-        torsoLean: 0.1,
-        torsoTwist: 0,
-        headPitch: -0.3 * fall,
-        nearShoulder: [0, -0.2, -0.4 - 1.4 * fall],
-        nearElbow: -0.4,
-        farShoulder: [0, 0.2, -0.4 - 1.6 * fall],
-        farElbow: -0.3,
-        nearHip: 0.2 * fall,
-        nearKnee: -0.4,
-        farHip: -0.15,
-        farKnee: -0.3,
-        crouch: 0,
-        bodyPitch: (Math.PI / 2) * fall,
-      }
-    }
-    case 'victory': {
-      const pump = Math.abs(Math.sin(elapsed * 3.2))
-      return {
-        ...GUARD,
-        torsoLean: -0.06,
-        torsoTwist: 0,
-        headPitch: 0.15,
-        nearShoulder: [0, 0, Math.PI - 0.3 - pump * 0.15],
-        nearElbow: -0.25,
-        farShoulder: [0, -0.4, -0.5],
-        farElbow: -1.2,
-        crouch: 0.04 + pump * 0.03,
-      }
-    }
-    default:
-      return { ...GUARD, crouch: GUARD.crouch + bob }
-  }
+export const GI_BOUNDS = new THREE.Box3(new THREE.Vector3(-0.34, 0.86, -0.3), new THREE.Vector3(0.34, 1.52, 0.34))
+
+export interface FighterPose {
+  readonly action: FighterAction
+  readonly actionT: number
+  /** The clip the simulation chose for this action, or null to choose here. */
+  readonly clip: string | null
+  /** True during hit-stop: the clip holds its frame. */
+  readonly frozen: boolean
 }
+
+/** What the fighter dissolves into, per stage. */
+export interface FighterAir {
+  readonly fogColor: string
+  readonly fogNear: number
+  readonly fogFar: number
+}
+
+interface FighterModelProps {
+  /** Index into FIGHTERS. */
+  readonly index: number
+  /** The deck's colour, used when the owner has never opened the dojo. */
+  readonly color: string
+  /** The dojo's choices. Null keeps the page exactly as the bake left it. */
+  readonly paint?: string | null
+  readonly livery?: string | null
+  readonly air: FighterAir
+  /** Reads the pose each frame; null hides the fighter. */
+  readonly getPose: () => FighterPose | null
+}
+
+interface BuiltMaterials {
+  readonly all: ReadonlyArray<THREE.ShaderMaterial>
+  /** The skin: the page, which is where the paint goes. */
+  readonly skin: ReadonlyArray<THREE.ShaderMaterial>
+}
+
+function applyRingMaterials(
+  root: THREE.Object3D,
+  air: FighterAir,
+  skin: { readonly paint: string; readonly pattern: number; readonly strength: number },
+): BuiltMaterials {
+  const all: THREE.ShaderMaterial[] = []
+  const skinMaterials: THREE.ShaderMaterial[] = []
+  root.traverse((child) => {
+    if (!(child instanceof THREE.Mesh)) return
+    const source = sourceMaterialOf(child)
+    const standard =
+      source instanceof THREE.MeshStandardMaterial || source instanceof THREE.MeshBasicMaterial ? source : null
+    const map = standard?.map ?? null
+    const material = createPs1Material({
+      color: map ? '#ffffff' : '#c0a080',
+      map: map ? configurePs1Texture(map) : undefined,
+      fogColor: air.fogColor,
+      fogNear: air.fogNear,
+      fogFar: air.fogFar,
+      // The sculpt's page carries its own painted shading; the shader only
+      // has to keep the far side from crushing to black.
+      ambient: 0.6,
+      livery: { pattern: skin.pattern, paint: skin.paint, bounds: GI_BOUNDS, paintStrength: skin.strength, clipPaint: true },
+    })
+    child.material = material
+    // A skinned mesh's bounds are its bind pose; a fallen fighter would be
+    // culled where he lay.
+    child.frustumCulled = false
+    all.push(material)
+    if (map) skinMaterials.push(material)
+  })
+  return { all, skin: skinMaterials }
+}
+
+export function FighterModel({ index, color, paint = null, livery = null, air, getPose }: FighterModelProps): React.ReactElement {
+  const spec = fighterFor(index)
+  const { scene, animations } = useGLTF(spec.modelUrl)
+
+  // Cloned with the skeleton: a plain clone shares the bones with the
+  // cached scene, and two fighters of the same type would fight as one.
+  const model = useMemo(() => {
+    const clone = cloneSkeleton(scene)
+    clone.updateMatrixWorld(true)
+    return clone
+  }, [scene])
+
+  // Rebuilt when the owner's choices or the stage's air change — once per
+  // bout at most, and a respray is rarer than that. Materials are cheap;
+  // a program is compiled once per shader and shared underneath.
+  const materials = useMemo(
+    () =>
+      applyRingMaterials(model, air, {
+        paint: paint ?? color,
+        pattern: liveryShaderId(livery),
+        strength: paint === null ? 0 : PAINT_STRENGTH,
+      }),
+    [model, air, paint, livery, color],
+  )
+
+  const mixer = useMemo(() => new THREE.AnimationMixer(model), [model])
+  const actions = useMemo(() => {
+    const byName = new Map<string, THREE.AnimationAction>()
+    for (const clip of animations) {
+      const action = mixer.clipAction(clip, model)
+      const loops = Object.values(CLIP_FOR_ACTION).some((choice) => choice.loop && choice.variants.includes(clip.name))
+      action.setLoop(loops ? THREE.LoopRepeat : THREE.LoopOnce, Infinity)
+      action.clampWhenFinished = !loops
+      byName.set(clip.name, action)
+    }
+    return byName
+  }, [mixer, animations, model])
+
+  useEffect(() => {
+    return () => {
+      mixer.stopAllAction()
+      for (const material of materials.all) material.dispose()
+    }
+  }, [mixer, materials])
+
+  const playing = useRef<{ action: FighterAction; clip: THREE.AnimationAction; actionT: number } | null>(null)
+
+  useFrame((_, delta) => {
+    const pose = getPose()
+    model.visible = pose !== null
+    if (!pose) return
+    const current = playing.current
+    // A new action, or the same action started again: the simulation
+    // resets actionT to zero when it does either.
+    const restarted = current !== null && pose.actionT < current.actionT - 0.05
+    if (current === null || current.action !== pose.action || restarted) {
+      const choice = CLIP_FOR_ACTION[pose.action]
+      // The simulation's pick, if it is a clip this action can play — a
+      // pose from over the wire can name anything — else a pick made here.
+      const clipName =
+        pose.clip !== null && choice.variants.includes(pose.clip) && actions.has(pose.clip) ? pose.clip : pickClip(pose.action)
+      const next = actions.get(clipName)
+      if (next) {
+        if (current) current.clip.fadeOut(CLIP_BLEND_S)
+        next.reset()
+        const timeScale = clipTimeScale(spec, clipName, choice)
+        next.timeScale = timeScale
+        // A clip run backwards has to start from its end, or the first
+        // frame it shows is the wrap.
+        if (timeScale < 0) next.time = next.getClip().duration
+        next.fadeIn(CLIP_BLEND_S).play()
+        playing.current = { action: pose.action, clip: next, actionT: pose.actionT }
+      }
+    } else {
+      current.actionT = pose.actionT
+    }
+    mixer.update(pose.frozen ? 0 : Math.min(delta, 0.1))
+  })
+
+  return <primitive object={model} />
+}
+
+// --- The ring -------------------------------------------------------------
 
 interface FighterProps {
   /** Reads the live fighter each frame; null while no bout is on. */
   readonly getFighter: () => SimFighter | null
+  /** True during hit-stop. */
+  readonly isFrozen: () => boolean
   /** Fallback kit colour while the sim has nobody for this slot. */
   readonly fallbackColor: string
+  readonly air: FighterAir
+  /** The stage's floor under a ring x, in fighter units. */
+  readonly floorAt: (x: number) => number
 }
 
-function material(color: string, emissive = 0): THREE.ShaderMaterial {
-  return createPs1Material({
-    color,
-    fogColor: ARENA_SKY.mid,
-    fogNear: ARENA_FOG_NEAR,
-    fogFar: ARENA_FOG_FAR,
-    emissive,
-  })
+interface SlotIdentity {
+  readonly key: string
+  readonly index: number
+  readonly color: string
+  readonly paint: string | null
+  readonly livery: string | null
 }
 
 /**
- * The gi. Same material as everything else, plus the race's livery decal:
- * the pattern is cut against the torso's own box, so a driver's twin stripe
- * crosses the chest at the same normalised height it crosses the car's
- * flank. The kit is shared by torso, arms and thighs — the smaller boxes
- * sample the middle of the same field, which reads as matching trim.
+ * One corner of the ring. Follows the simulation's fighter for its slot:
+ * where they stand, which way they face, what they are doing — and who they
+ * are, which changes between bouts and swaps the sculpt underneath.
  */
-function kitMaterialFor(color: string): THREE.ShaderMaterial {
-  const torsoBounds = new THREE.Box3(
-    new THREE.Vector3(-SIZES.torso[0] / 2, -SIZES.torso[1] / 2, -SIZES.torso[2] / 2),
-    new THREE.Vector3(SIZES.torso[0] / 2, SIZES.torso[1] / 2, SIZES.torso[2] / 2),
-  )
-  return createPs1Material({
-    color,
-    fogColor: ARENA_SKY.mid,
-    fogNear: ARENA_FOG_NEAR,
-    fogFar: ARENA_FOG_FAR,
-    livery: { pattern: 0, paint: color, bounds: torsoBounds },
-  })
-}
-
-function box(size: readonly [number, number, number]): THREE.BoxGeometry {
-  return new THREE.BoxGeometry(size[0], size[1], size[2])
-}
-
-/** Limb helper: a joint group whose child box hangs off along -y or +x. */
-function Limb({
-  geometry,
-  mat,
-  length,
-  axis,
-}: {
-  readonly geometry: THREE.BoxGeometry
-  readonly mat: THREE.ShaderMaterial
-  readonly length: number
-  readonly axis: 'down' | 'out'
-}): React.ReactElement {
-  const offset: [number, number, number] =
-    axis === 'down' ? [0, -length / 2, 0] : [length / 2, 0, 0]
-  return <mesh geometry={geometry} material={mat} position={offset} />
-}
-
-export function Fighter({ getFighter, fallbackColor }: FighterProps): React.ReactElement {
+export function Fighter({ getFighter, isFrozen, fallbackColor, air, floorAt }: FighterProps): React.ReactElement {
   const root = useRef<THREE.Group>(null)
-  const body = useRef<THREE.Group>(null)
-  const torso = useRef<THREE.Group>(null)
-  const head = useRef<THREE.Group>(null)
-  const shoulderNear = useRef<THREE.Group>(null)
-  const elbowNear = useRef<THREE.Group>(null)
-  const shoulderFar = useRef<THREE.Group>(null)
-  const elbowFar = useRef<THREE.Group>(null)
-  const hipNear = useRef<THREE.Group>(null)
-  const kneeNear = useRef<THREE.Group>(null)
-  const hipFar = useRef<THREE.Group>(null)
-  const kneeFar = useRef<THREE.Group>(null)
-  const elapsed = useRef(Math.random() * 10)
-  // The undisplaced hip height. Damping has to read back its own previous
-  // output, so the fall offset below can never be written into it — subtract
-  // the offset only at the point of assignment, or it compounds every frame.
-  const baseHipY = useRef(HIP_Y)
+  const [identity, setIdentity] = useState<SlotIdentity | null>(null)
+  const identityRef = useRef<SlotIdentity | null>(null)
 
-  const kitMaterial = useRef<THREE.ShaderMaterial | null>(null)
-  const lastPaintJob = useRef<string>('')
-
-  const parts = useMemo(() => {
-    const kit = kitMaterialFor(fallbackColor)
-    const trim = material('#22222c')
-    const skin = material(SKIN)
-    const hair = material(HAIR)
-    return {
-      kit,
-      trim,
-      skin,
-      hair,
-      pelvis: box(SIZES.pelvis),
-      torso: box(SIZES.torso),
-      head: box(SIZES.head),
-      hairCap: box(SIZES.hair),
-      upperArm: box(SIZES.upperArm),
-      forearm: box(SIZES.forearm),
-      fist: box(SIZES.fist),
-      thigh: box(SIZES.thigh),
-      shin: box(SIZES.shin),
-      foot: box(SIZES.foot),
-    }
-  }, [fallbackColor])
-  kitMaterial.current = parts.kit
-
-  useFrame((_, delta) => {
+  useFrame(() => {
     const fighter = getFighter()
     const group = root.current
     if (!group) return
     if (!fighter) {
       group.visible = false
+      if (identityRef.current !== null) {
+        identityRef.current = null
+        setIdentity(null)
+      }
       return
     }
     group.visible = true
-    elapsed.current += delta
-
-    // Repaint the gi when the slot changes hands — or when its owner walks
-    // out of the paint shop mid-bout. The paint-shop colour wins over the
-    // deck's assigned one, exactly as it does on the car, so the costume and
-    // the kart are the same paint job seen twice.
-    const paintJob = `${fighter.paint ?? fighter.color}|${fighter.livery ?? ''}`
-    if (paintJob !== lastPaintJob.current && kitMaterial.current) {
-      lastPaintJob.current = paintJob
-      const kitColor = fighter.paint ?? fighter.color
-      const { uColor, uPaint, uLivery } = kitMaterial.current.uniforms
-      if (uColor) (uColor.value as THREE.Color).set(kitColor)
-      if (uPaint) (uPaint.value as THREE.Color).set(kitColor)
-      if (uLivery) uLivery.value = liveryShaderId(fighter.livery)
-    }
-
-    const pose = poseFor(fighter.action, fighter.actionT, elapsed.current)
-    const damp = (current: number, target: number): number =>
-      THREE.MathUtils.damp(current, target, 16, delta)
-
+    // Ring units: this group sits inside the scene's scaled ring group, so
+    // the simulation's x and the ring floor's height are used as they are.
     group.position.x = fighter.x
-    // The authored model faces +x; the right-side fighter turns around.
-    group.rotation.y = fighter.side === -1 ? 0 : Math.PI
+    group.position.y = floorAt(fighter.x)
+    group.rotation.y = fighter.side === -1 ? FACING_LEFT : -FACING_LEFT
 
-    const bodyGroup = body.current
-    if (bodyGroup) {
-      baseHipY.current = damp(baseHipY.current, HIP_Y - pose.crouch)
-      bodyGroup.rotation.z = damp(bodyGroup.rotation.z, pose.bodyPitch)
-      // A fallen body pivots at the heels, not the hips: as the pitch grows
-      // the root slides down so the shoulders land on the floor.
-      const fallen = Math.abs(bodyGroup.rotation.z) / (Math.PI / 2)
-      bodyGroup.position.y = baseHipY.current - fallen * (HIP_Y - 0.24)
+    // Who is standing here. Re-read every frame because the owner may walk
+    // out of the dojo mid-bout with a new gi; a change is a React commit,
+    // the same value is nothing.
+    const current = identityRef.current
+    const index = fighterOf(fighter.key, fighter.fighter)
+    const paint = fighter.fightPaint
+    const livery = fighter.fightLivery
+    if (
+      current === null ||
+      current.key !== fighter.key ||
+      current.index !== index ||
+      current.paint !== paint ||
+      current.livery !== livery ||
+      current.color !== fighter.color
+    ) {
+      const next = { key: fighter.key, index, color: fighter.color, paint, livery }
+      identityRef.current = next
+      setIdentity(next)
     }
-
-    const set = (
-      groupRef: React.RefObject<THREE.Group | null>,
-      x: number,
-      y: number,
-      z: number,
-    ): void => {
-      const joint = groupRef.current
-      if (!joint) return
-      joint.rotation.x = damp(joint.rotation.x, x)
-      joint.rotation.y = damp(joint.rotation.y, y)
-      joint.rotation.z = damp(joint.rotation.z, z)
-    }
-
-    set(torso, 0, pose.torsoTwist, pose.torsoLean)
-    set(head, 0, 0, pose.headPitch)
-    set(shoulderNear, pose.nearShoulder[0], pose.nearShoulder[1], pose.nearShoulder[2])
-    set(elbowNear, 0, pose.nearElbow, 0)
-    set(shoulderFar, pose.farShoulder[0], pose.farShoulder[1], pose.farShoulder[2])
-    set(elbowFar, 0, pose.farElbow, 0)
-    set(hipNear, 0, 0, pose.nearHip)
-    set(kneeNear, 0, 0, pose.nearKnee)
-    set(hipFar, 0, 0, pose.farHip)
-    set(kneeFar, 0, 0, pose.farKnee)
   })
 
-  const armLength = SIZES.upperArm[0]
-  const forearmLength = SIZES.forearm[0]
-  const thighLength = SIZES.thigh[1]
-  const shinLength = SIZES.shin[1]
+  const getPose = (): FighterPose | null => {
+    const fighter = getFighter()
+    if (!fighter) return null
+    return { action: fighter.action, actionT: fighter.actionT, clip: fighter.clip, frozen: isFrozen() }
+  }
 
   return (
-    <group ref={root}>
-      <group ref={body} position={[0, HIP_Y, 0]}>
-        <mesh geometry={parts.pelvis} material={parts.trim} />
-
-        <group ref={torso} position={[0, SIZES.pelvis[1] / 2, 0]}>
-          <mesh
-            geometry={parts.torso}
-            material={parts.kit}
-            position={[0, SIZES.torso[1] / 2, 0]}
+    <group ref={root} visible={false}>
+      {identity !== null && (
+        <Suspense fallback={null}>
+          <FighterModel
+            key={identity.index}
+            index={identity.index}
+            color={identity.color || fallbackColor}
+            paint={identity.paint}
+            livery={identity.livery}
+            air={air}
+            getPose={getPose}
           />
-          <group ref={head} position={[0, SIZES.torso[1] + 0.16, 0]}>
-            <mesh geometry={parts.head} material={parts.skin} />
-            <mesh geometry={parts.hairCap} material={parts.hair} position={[-0.02, 0.16, 0]} />
-          </group>
-
-          {/* Near arm: the opponent-facing side, z negative in author space
-              so the punch crosses the centre line. */}
-          <group ref={shoulderNear} position={[0, SHOULDER_Y, -SHOULDER_Z]}>
-            <Limb geometry={parts.upperArm} mat={parts.kit} length={armLength} axis="out" />
-            <group ref={elbowNear} position={[armLength, 0, 0]}>
-              <Limb geometry={parts.forearm} mat={parts.skin} length={forearmLength} axis="out" />
-              <mesh
-                geometry={parts.fist}
-                material={parts.trim}
-                position={[forearmLength + 0.06, 0, 0]}
-              />
-            </group>
-          </group>
-
-          <group ref={shoulderFar} position={[0, SHOULDER_Y, SHOULDER_Z]}>
-            <Limb geometry={parts.upperArm} mat={parts.kit} length={armLength} axis="out" />
-            <group ref={elbowFar} position={[armLength, 0, 0]}>
-              <Limb geometry={parts.forearm} mat={parts.skin} length={forearmLength} axis="out" />
-              <mesh
-                geometry={parts.fist}
-                material={parts.trim}
-                position={[forearmLength + 0.06, 0, 0]}
-              />
-            </group>
-          </group>
-        </group>
-
-        <group ref={hipNear} position={[0, -SIZES.pelvis[1] / 2, -0.12]}>
-          <Limb geometry={parts.thigh} mat={parts.kit} length={thighLength} axis="down" />
-          <group ref={kneeNear} position={[0, -thighLength, 0]}>
-            <Limb geometry={parts.shin} mat={parts.trim} length={shinLength} axis="down" />
-            <mesh
-              geometry={parts.foot}
-              material={parts.trim}
-              position={[0.08, -shinLength, 0]}
-            />
-          </group>
-        </group>
-
-        <group ref={hipFar} position={[0, -SIZES.pelvis[1] / 2, 0.12]}>
-          <Limb geometry={parts.thigh} mat={parts.kit} length={thighLength} axis="down" />
-          <group ref={kneeFar} position={[0, -thighLength, 0]}>
-            <Limb geometry={parts.shin} mat={parts.trim} length={shinLength} axis="down" />
-            <mesh
-              geometry={parts.foot}
-              material={parts.trim}
-              position={[0.08, -shinLength, 0]}
-            />
-          </group>
-        </group>
-      </group>
+        </Suspense>
+      )}
     </group>
   )
+}
+
+/** Every sculpt, warmed before the first card goes up. */
+export function preloadFighters(): void {
+  for (const url of fighterModelUrls()) useGLTF.preload(url)
 }

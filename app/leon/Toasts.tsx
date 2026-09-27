@@ -33,7 +33,10 @@ export function Toasts({ events }: { events: ReadonlyArray<LeaderboardEvent> | u
     const fresh = events.filter(
       (e) =>
         !seenIds.current?.has(e.id) &&
-        (e.type === 'milestone' || e.type === 'new_leader'),
+        (e.type === 'milestone' ||
+          e.type === 'new_leader' ||
+          e.type === 'control_taken' ||
+          e.type === 'hot_lap'),
     )
     if (fresh.length === 0) return
 

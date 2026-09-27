@@ -3,6 +3,15 @@
 import { useCallback, useEffect, useRef } from 'react'
 import type { CorridorSample } from './circuit'
 import type { RacerState } from './types'
+import { NITRO_SPEED_MULTIPLIER } from '@/lib/nitro'
+import {
+  isRemoteLive,
+  type ControlMode,
+  type DriveLink,
+  type GhostSample,
+  type RacePose,
+} from '../../control/types'
+import { gearFor } from './gearbox'
 
 // The whole game. Deliberately one file, because the rules are the interesting
 // part and they should be readable in one sitting.
@@ -24,18 +33,26 @@ import type { RacerState } from './types'
 /** Tokens/min that maps to full speed. Above this, everyone looks the same. */
 const REFERENCE_BURN_RATE = 25_000
 /**
- * Units per second at REFERENCE_BURN_RATE. Raised from 30: at the old pace
- * the glance-from-across-the-room test was passing on the straights and
- * failing in the corners, where the field settled into a procession. The
- * extra pace pushes more of the lap past the grip limit (see GRIP), which is
- * where all the drama in this simulation actually lives.
+ * Units per second at REFERENCE_BURN_RATE. 38 before, 30 before that, and the
+ * argument has not changed: the picture has to carry the drama because the
+ * tower carries the order, and a circuit this size flatters pace. At 52 a lap
+ * of Lone Peak is under a minute and the field arrives at a corner rather
+ * than approaching it.
+ *
+ * Raising this alone would only produce a permanent slide — slip goes with
+ * speed SQUARED — so it moves with GRIP, which is raised alongside it to keep
+ * the break-traction point roughly where it was and a shade past it. The two
+ * numbers are a pair; change one and the cars either run on rails or spend
+ * the whole lap in the barrier.
  */
-const MAX_SPEED = 38
+const MAX_SPEED = 52
 /**
  * Even an idle kart rolls. A stationary kart reads as a broken screen, and the
  * standings channel already states idleness plainly — here it just means slow.
+ * Lifted with MAX_SPEED so the back of the field still looks like it is
+ * racing rather than being lapped by something from another game.
  */
-const IDLE_SPEED = 14
+const IDLE_SPEED = 19
 /**
  * Compression exponent. Burn rates are wildly long-tailed — one person mid
  * agent-run can out-token an idle team by 50x. A square root keeps the whole
@@ -43,8 +60,13 @@ const IDLE_SPEED = 14
  * actually reads.
  */
 const SPEED_COMPRESSION = 0.5
-/** Seconds for actual speed to converge on target. Karts have inertia. */
-const SPEED_SMOOTHING = 1.2
+/**
+ * Seconds for actual speed to converge on target. Karts have inertia — but
+ * less of it than they had: at 1.2 a car recovering from a shunt spent a
+ * third of a straight visibly doing nothing, which at this pace reads as a
+ * dropped frame rather than as weight.
+ */
+const SPEED_SMOOTHING = 0.9
 /**
  * Fraction of full speed above which a car is "flat out" and starts throwing
  * flame and rubber. Deliberately high: a boost effect that is always on is
@@ -75,14 +97,24 @@ export const BOOST_THRESHOLD = 0.72
  * commitment", which is what makes the field look driven rather than
  * conveyed. The straights are still clean — slip needs curvature.
  */
-const GRIP = 26
-/** Sideways acceleration at full slip, in units/s². */
-const SLIDE_ACCEL = 6.4
-/** How hard a car is pulled back to its own lane, and how fast that settles. */
-const LANE_SPRING = 5.5
-const LANE_DAMPING = 3.2
+const GRIP = 34
+/**
+ * Sideways acceleration at full slip, in units/s². Up with the pace: a slide
+ * that takes as long to develop as it did at 38 units/s is a slide the car
+ * has already driven out of by the time the eye finds it.
+ */
+const SLIDE_ACCEL = 7.4
+/**
+ * How hard a car is pulled back to its own lane, and how fast that settles.
+ *
+ * Both raised with the pace, and they have to move together: the spring is
+ * what ends a drift, and a spring stiffened without its damper turns the
+ * recovery into a weave down the following straight.
+ */
+const LANE_SPRING = 6.2
+const LANE_DAMPING = 3.6
 /** Yaw angle at full slip, radians. ~33°: a big drift, still short of a spin. */
-const MAX_DRIFT_YAW = 0.58
+const MAX_DRIFT_YAW = 0.75
 /** How far the front wheels turn per unit of curvature demand, radians. */
 const STEER_GAIN = 14
 const MAX_STEER = 0.5
@@ -114,7 +146,7 @@ const EDGE_MARGIN = 1.2
  * A car leaning on the barrier through a long corner is not crashing, and
  * spraying sparks the whole way round would spend the effect entirely.
  */
-const WALL_IMPACT_SPEED = 2.2
+const WALL_IMPACT_SPEED = 2.5
 /** Fraction of its outward speed a car keeps, bounced back off a wall. */
 const WALL_BOUNCE = 0.35
 /** Pace a car drops to when it hits a wall, as a fraction of its target. */
@@ -144,7 +176,7 @@ const BUMP_YAW = 0.5
 /** Speed each car drops to on contact, as a fraction of its target. */
 const BUMP_SPEED_FLOOR = 0.5
 /** Seconds to climb back to full pace afterwards. */
-const BUMP_RECOVERY = 1.9
+const BUMP_RECOVERY = 1.4
 /** Seconds a pair is ignored after a hit, so one shunt is not fifty. */
 const BUMP_COOLDOWN = 0.8
 /** Seconds the yaw slew takes to wash out. */
@@ -173,29 +205,129 @@ const MAX_RECORDED_LAPS = 8
 // ---------------------------------------------------------------------------
 
 /** Sideways speed into a wall that puts the car over rather than off it. */
-const CRASH_WALL_SPEED = 4.6
+const CRASH_WALL_SPEED = 5.2
+// --- Driving by hand ---------------------------------------------------------
+//
+// A driven car runs the same physics as the field: the corner still throws it
+// wide, the barrier still bites, the pack still shunts it. What changes is
+// where the intent comes from — the throttle sets the pace instead of the
+// burn rate, and the wheel pushes the car across the road instead of the lane
+// spring pulling it home.
+
+/** Pace with the throttle fully released. Not zero: a stopped car is a wall. */
+const DRIVEN_MIN_SPEED = 6
+/** Seconds for a driven car to answer the throttle. Quicker than the field. */
+const DRIVEN_SPEED_SMOOTHING = 0.45
+/** ...and quicker still under braking, or the brake is a suggestion. */
+const DRIVEN_BRAKE_SMOOTHING = 0.28
+/** Sideways push per second of full lock, at full speed. */
+const DRIVEN_STEER_ACCEL = 34
+/** Lateral is positive towards UP × tangent — the driver's left. */
+const STEER_SIGN = -1
+/** Nose yaw from the wheel alone, before any slide. Presentation. */
+const DRIVEN_STEER_YAW = 0.14
+/** How quickly a car driven on another screen settles onto its reported pose. */
+const REMOTE_SMOOTHING = 0.12
+/** Seconds between samples of a driven lap, for the ghost. */
+const GHOST_SAMPLE_S = 0.1
+
 /** Combined pace of both cars, in flat-out-car units, that arms a shunt. */
 const CRASH_BUMP_PACE = 0.9
 /** Chance an armed shunt actually sends a given car over. */
 const CRASH_BUMP_CHANCE = 0.35
 /** How long a wreck lasts, start of the tumble to back under way. */
-const CRASH_DURATION_MIN = 2.1
-const CRASH_DURATION_MAX = 3.2
+const CRASH_DURATION_MIN = 1.8
+const CRASH_DURATION_MAX = 2.7
 /** Pace floor while wrecked. Not zero: a dead-stopped car reads as a bug. */
 const CRASH_SPEED_FLOOR = 0.07
 /** Fraction of the wreck spent tumbling and settling; the rest is recovery. */
 export const CRASH_TUMBLE_SHARE = 0.7
+/**
+ * Seconds the flip itself takes, from launch to landing. Matches the
+ * explosion sheet's own length, so the fireball opens as the car leaves the
+ * road and is smoke by the time it is back on it.
+ */
+export const FLIP_DURATION = 1.1
 /** Seconds after a wreck before the same car can be sent over again. */
 const CRASH_COOLDOWN = 11
 /** Chance a wreck is a double roll rather than a single. */
 const CRASH_DOUBLE_ROLL_CHANCE = 0.35
+/**
+ * Chance a wreck is the big one: the car snaps through a full flip on top
+ * of its tumble and goes up. Well short of a coin toss on purpose — the
+ * explosion is the loudest thing the channel can do, and a wreck that is
+ * always an explosion stops being one. At four in ten the ordinary tumble
+ * stays the ordinary outcome and the fireball stays an event.
+ */
+const CRASH_FLIP_CHANCE = 0.4
+
+// ---------------------------------------------------------------------------
+// Telling the effects layer
+//
+// The counters on each car (bumpCount, wallCount, crashCount) say *that*
+// something happened to a car. They cannot say where two cars met without
+// both cars carrying the same point, and cannot say which of two kinds of
+// wreck a crash was without another field per kind. So alongside them the
+// simulation now keeps a short ring of events — one entry per thing that
+// went bang, with its kind and its place on the road — and the effects
+// layer drains whatever has arrived since it last looked.
+//
+// A ring rather than a queue because nothing here allocates per frame: the
+// entries exist from the start and are overwritten in place, and a reader
+// that falls a whole ring behind simply misses the oldest, which on an
+// all-day screen is the right failure.
+// ---------------------------------------------------------------------------
+
+export type SimFxKind = 'bump' | 'wall' | 'crash' | 'flip'
+
+export interface SimFxEvent {
+  kind: SimFxKind
+  /** Where on the lap, and how far across it, the thing happened. */
+  t: number
+  lateral: number
+  /** Which car it happened to; -1 for a contact shared between two. */
+  racer: number
+  /** Monotonic, so a reader can tell new entries from ones it has seen. */
+  serial: number
+}
+
+export interface SimFxRing {
+  readonly events: ReadonlyArray<SimFxEvent>
+  /** Serial of the most recent event written, 0 before any. */
+  serial: number
+}
+
+/** Events remembered. Sixteen cars could all hit the wall in one frame and fit. */
+const FX_RING_SIZE = 32
+
+function createFxRing(): SimFxRing {
+  const events: SimFxEvent[] = []
+  for (let index = 0; index < FX_RING_SIZE; index++) {
+    events.push({ kind: 'bump', t: 0, lateral: 0, racer: -1, serial: 0 })
+  }
+  return { events, serial: 0 }
+}
+
+function pushFx(ring: SimFxRing, kind: SimFxKind, t: number, lateral: number, racer: number): void {
+  ring.serial += 1
+  // Written in place: the ring's entries are the only ones there will ever be.
+  const slot = ring.events[ring.serial % FX_RING_SIZE]
+  slot.kind = kind
+  slot.t = t
+  slot.lateral = lateral
+  slot.racer = racer
+  slot.serial = ring.serial
+}
 
 /**
  * Puts a car into a wreck, rolling towards `direction` (+1 is the positive
  * lateral side). No-op while one is already running or too recently over —
  * a car that flips on landing is a pinball, not a crash.
+ *
+ * Decides here, once, whether this is the wreck that goes up: the renderer
+ * and the effects layer both read `crashFlip`, and the two have to agree.
  */
-function beginCrash(racer: SimRacer, direction: number): void {
+function beginCrash(racer: SimRacer, index: number, direction: number, fx: SimFxRing): void {
   if (racer.crashTimer > 0 || racer.crashCooldown > 0) return
   const side = direction === 0 ? 1 : Math.sign(direction)
   racer.crashDuration =
@@ -203,9 +335,11 @@ function beginCrash(racer: SimRacer, direction: number): void {
   racer.crashTimer = racer.crashDuration
   racer.crashRolls = side * (Math.random() < CRASH_DOUBLE_ROLL_CHANCE ? 2 : 1)
   racer.crashSpin = side * (0.5 + Math.random() * 1.1)
+  racer.crashFlip = Math.random() < CRASH_FLIP_CHANCE ? side : 0
   racer.crashCooldown = CRASH_COOLDOWN + racer.crashDuration
   racer.crashCount += 1
   racer.speedScale = CRASH_SPEED_FLOOR
+  pushFx(fx, racer.crashFlip === 0 ? 'crash' : 'flip', racer.t, racer.lateral, index)
 }
 
 export interface SimRacer {
@@ -213,12 +347,18 @@ export interface SimRacer {
   name: string
   color: string
   lane: number
+  /** Who is deciding this car's motion this frame. Set by step. */
+  mode: ControlMode
   /** Normalised position around the lap, 0..1. */
   t: number
   lap: number
   /** Current metres/second. */
   speed: number
   targetSpeed: number
+  /** Which of the six gears the car is in, from its road speed. See gearbox.ts. */
+  gear: number
+  /** Engine speed as a fraction of the redline, 0..1. */
+  rpm: number
   score: number
   rank: number
   velocityTokensPerMin: number
@@ -273,6 +413,14 @@ export interface SimRacer {
   crashRolls: number
   /** Signed yaw the car picks up while tumbling, radians. */
   crashSpin: number
+  /**
+   * Which way the car flips, or 0 for a wreck that only tumbles. Signed like
+   * `crashRolls`. When set, the renderer adds a snap roll and a second lift
+   * over the first FLIP_DURATION seconds of the wreck, and the effects layer
+   * lights the fireball. Not carried in a remote pose — a car driven on
+   * another screen tumbles here without the flip.
+   */
+  crashFlip: number
   /** Increments once per wreck, for the effects layer. Same idea as bumpCount. */
   crashCount: number
   /** Seconds before this car can be wrecked again. */
@@ -344,6 +492,11 @@ interface UseRaceSimOptions {
    * before there was anything better to race on.
    */
   readonly corridorAt?: (t: number, out: CorridorSample) => void
+  /**
+   * The wheel. Absent on a screen nobody can drive from; present, the sim
+   * reads it every frame for who is driving and where remote cars are.
+   */
+  readonly drive?: DriveLink<RacePose>
 }
 
 export interface RaceSim {
@@ -351,6 +504,8 @@ export interface RaceSim {
   readonly racers: React.RefObject<SimRacer[]>
   /** Advance the simulation. Call from useFrame with the frame delta. */
   readonly step: (delta: number) => void
+  /** Bangs since the start, newest last around the ring. Read, never written, by effects. */
+  readonly fx: React.RefObject<SimFxRing>
 }
 
 /**
@@ -364,8 +519,22 @@ export function useRaceSim({
   laneOffset,
   roadHalfWidth = 7.4,
   corridorAt,
+  drive,
 }: UseRaceSimOptions): RaceSim {
   const state = useRef<SimRacer[]>([])
+  const fx = useRef<SimFxRing>(createFxRing())
+  const driveRef = useRef(drive)
+  driveRef.current = drive
+  /**
+   * The driven lap so far, sampled for the ghost. Reset on the line and on
+   * taking the wheel. `clean` is only true once the player has crossed the
+   * line with the wheel in hand: a lap the AI started is not a record.
+   */
+  const ghost = useRef<{ samples: GhostSample[]; sinceSample: number; clean: boolean }>({
+    samples: [],
+    sinceSample: 0,
+    clean: false,
+  })
 
   // The frame loop reads these through a ref rather than closing over them.
   // `step` is handed to useFrame once; rebuilding it because the circuit
@@ -404,6 +573,7 @@ export function useRaceSim({
         name: racer.name,
         color: racer.color ?? '#00f0ff',
         lane: index,
+        mode: 'auto',
         // Stagger the grid so a fresh join doesn't spawn inside someone. ~5m
         // apart, expressed against the live lap rather than baked in as a
         // fraction: on a 900m circuit a fixed 2.4% of a lap is 22m, and the
@@ -412,6 +582,8 @@ export function useRaceSim({
         lap: 0,
         speed: 0,
         targetSpeed,
+        gear: 1,
+        rpm: 0,
         score: racer.score,
         rank: racer.rank,
         velocityTokensPerMin: racer.velocityTokensPerMin,
@@ -432,6 +604,7 @@ export function useRaceSim({
         crashDuration: 1,
         crashRolls: 0,
         crashSpin: 0,
+        crashFlip: 0,
         crashCount: 0,
         crashCooldown: 0,
         impactT: 0,
@@ -457,7 +630,32 @@ export function useRaceSim({
       const nominalEdge = Math.max(0, halfWidth - EDGE_MARGIN)
       const sample = corridor.current
 
-      for (const racer of field) {
+      const drive = driveRef.current
+      const now = Date.now()
+
+      const bangs = fx.current
+      for (let index = 0; index < field.length; index++) {
+        const racer = field[index]
+        // --- who is driving -----------------------------------------------
+        const remote = drive && drive.drivenKey !== racer.key ? drive.remotes.get(racer.key) : undefined
+        if (isRemoteLive(remote, now)) {
+          racer.mode = 'remote'
+          racer.lapClock += dt
+          racer.totalClock += dt
+          applyRemotePose(racer, remote.pose, dt, trackLength)
+          continue
+        }
+        const isDriven = drive !== undefined && drive.drivenKey === racer.key
+        if (isDriven && racer.mode !== 'driven') {
+          // Taking the wheel mid-lap: the clock already holds AI time, and any
+          // samples left over belong to an earlier stint. Neither is a record.
+          ghost.current.samples = []
+          ghost.current.sinceSample = 0
+          ghost.current.clean = false
+        }
+        racer.mode = isDriven ? 'driven' : 'auto'
+        const input = isDriven ? drive.input : null
+
         // --- where the road actually is -----------------------------------
         // Asked per car rather than per frame: the field is strung out over a
         // lap, and the car in the hairpin has a different road from the one
@@ -497,8 +695,30 @@ export function useRaceSim({
           if (wrecked) racer.speedScale = Math.min(racer.speedScale, CRASH_SPEED_FLOOR)
         }
 
-        const blend = 1 - Math.exp(-dt / SPEED_SMOOTHING)
-        racer.speed += (racer.targetSpeed * racer.speedScale - racer.speed) * blend
+        let paceTarget = racer.targetSpeed
+        let smoothing = SPEED_SMOOTHING
+        if (input && drive) {
+          // The nitro burns only while the key is down, the bank has charge,
+          // and the car is on its wheels — a boosted wreck is a firework.
+          const lit = input.boost && drive.nitro.charge > 0 && !wrecked
+          if (lit) drive.nitro.charge = Math.max(0, drive.nitro.charge - dt)
+          drive.nitro.lit = lit
+          const throttle = Math.max(0, Math.min(1, input.throttle))
+          const brake = Math.max(0, Math.min(1, input.brake))
+          paceTarget =
+            (DRIVEN_MIN_SPEED + throttle * (MAX_SPEED - DRIVEN_MIN_SPEED)) *
+            (lit ? NITRO_SPEED_MULTIPLIER : 1) *
+            (1 - brake * 0.85)
+          smoothing = paceTarget < racer.speed ? DRIVEN_BRAKE_SMOOTHING : DRIVEN_SPEED_SMOOTHING
+        }
+        const blend = 1 - Math.exp(-dt / smoothing)
+        racer.speed += (paceTarget * racer.speedScale - racer.speed) * blend
+
+        // The box follows the road speed, so a car gathering itself after a
+        // shunt is seen climbing back through the gears.
+        const shifted = gearFor(speedFraction(racer.speed))
+        racer.gear = shifted.gear
+        racer.rpm = shifted.rpm
 
         racer.lapClock += dt
         racer.totalClock += dt
@@ -522,7 +742,14 @@ export function useRaceSim({
         // weaving down the following straight — except mid-wreck, where the
         // car stays where it was thrown and just sheds what motion it has.
         if (!wrecked) {
-          racer.lateralVelocity += (home - racer.lateral) * LANE_SPRING * dt
+          if (input) {
+            // The wheel replaces the lane: nothing pulls a driven car home,
+            // and the driver holds their line or loses it.
+            const authority = Math.max(0.25, racer.speed / MAX_SPEED)
+            racer.lateralVelocity += STEER_SIGN * input.steer * DRIVEN_STEER_ACCEL * authority * dt
+          } else {
+            racer.lateralVelocity += (home - racer.lateral) * LANE_SPRING * dt
+          }
         }
         racer.lateralVelocity -=
           racer.lateralVelocity * Math.min(1, (wrecked ? LANE_DAMPING * 2 : LANE_DAMPING) * dt)
@@ -547,9 +774,12 @@ export function useRaceSim({
               racer.wallCount += 1
               racer.impactT = racer.t
               racer.impactLateral = racer.lateral
+              // The bang is at the panel that met the rail, half a car out
+              // from the centre the simulation tracks — not at the driver.
+              pushFx(bangs, 'wall', racer.t, racer.lateral + side * (CAR_WIDTH / 2), index)
               // Hard enough into the rail and the car goes over it — rolling
               // back towards the road, because the rail is what launched it.
-              if (closing > CRASH_WALL_SPEED) beginCrash(racer, -side)
+              if (closing > CRASH_WALL_SPEED) beginCrash(racer, index, -side, bangs)
             }
           }
         }
@@ -558,7 +788,8 @@ export function useRaceSim({
         // while the car travels towards the outside, which is the entire
         // visual signature of a drift.
         racer.bumpYaw -= racer.bumpYaw * Math.min(1, dt / BUMP_YAW_DECAY)
-        racer.yaw = slip * MAX_DRIFT_YAW + racer.bumpYaw
+        racer.yaw =
+          slip * MAX_DRIFT_YAW + racer.bumpYaw + (input ? STEER_SIGN * input.steer * DRIVEN_STEER_YAW : 0)
 
         // The front wheels. Two terms, both from numbers already computed:
         // the corner asks for an angle (curvature times gain), and the drift
@@ -566,7 +797,9 @@ export function useRaceSim({
         // *going*, so a sideways body shows counter-steer automatically.
         const steerTarget = wrecked
           ? 0
-          : Math.max(-MAX_STEER, Math.min(MAX_STEER, bend * STEER_GAIN - racer.yaw))
+          : input
+            ? Math.max(-MAX_STEER, Math.min(MAX_STEER, STEER_SIGN * input.steer * MAX_STEER - racer.yaw * 0.5))
+            : Math.max(-MAX_STEER, Math.min(MAX_STEER, bend * STEER_GAIN - racer.yaw))
         racer.steer += (steerTarget - racer.steer) * (1 - Math.exp(-dt / STEER_SMOOTHING))
 
         // --- distance along the lap ---------------------------------------
@@ -578,19 +811,36 @@ export function useRaceSim({
           // the thousandths honest rather than quantised to the frame rate,
           // which is the entire reason the readout carries three of them.
           const overshoot = ((advanced - 1) * trackLength) / Math.max(racer.speed, 0.0001)
-          racer.lapTimes.push(Math.max(0, racer.lapClock - overshoot))
+          const lapSeconds = Math.max(0, racer.lapClock - overshoot)
+          racer.lapTimes.push(lapSeconds)
           if (racer.lapTimes.length > MAX_RECORDED_LAPS) racer.lapTimes.shift()
           racer.lapClock = overshoot
+          if (input && drive) {
+            // A lap driven line to line is a record, and the trace of it is a
+            // ghost. The first crossing after taking the wheel only starts one.
+            if (ghost.current.clean) drive.onLap?.(lapSeconds, ghost.current.samples)
+            ghost.current.samples = []
+            ghost.current.sinceSample = 0
+            ghost.current.clean = true
+          }
         }
         racer.t = advanced % 1
+
+        if (input) {
+          ghost.current.sinceSample += dt
+          if (ghost.current.sinceSample >= GHOST_SAMPLE_S) {
+            ghost.current.sinceSample = 0
+            ghost.current.samples.push({ t: racer.t, l: racer.lateral, y: racer.yaw })
+          }
+        }
       }
 
-      resolveContacts(field, trackLength)
+      resolveContacts(field, trackLength, bangs)
     },
     [trackLength],
   )
 
-  return { racers: state, step }
+  return { racers: state, step, fx }
 }
 
 /**
@@ -603,11 +853,14 @@ export function useRaceSim({
  * inches apart on the road, and it is the road that decides whether they
  * touch.
  */
-function resolveContacts(field: ReadonlyArray<SimRacer>, trackLength: number): void {
+function resolveContacts(field: ReadonlyArray<SimRacer>, trackLength: number, fx: SimFxRing): void {
   for (let i = 0; i < field.length; i++) {
     for (let j = i + 1; j < field.length; j++) {
       const a = field[i]
       const b = field[j]
+      // A car driven on another screen is placed, not simulated, here. A
+      // shove it never feels would be undone by its next pose anyway.
+      if (a.mode === 'remote' || b.mode === 'remote') continue
       if (a.bumpCooldown > 0 || b.bumpCooldown > 0) continue
 
       // Shortest way round: two cars either side of the start line are
@@ -656,6 +909,8 @@ function resolveContacts(field: ReadonlyArray<SimRacer>, trackLength: number): v
       b.impactT = contactT
       a.impactLateral = contactLateral
       b.impactLateral = contactLateral
+      // One event for the pair, which is what makes it one bang on screen.
+      pushFx(fx, 'bump', contactT, contactLateral, -1)
 
       // A shunt between two cars both carrying real pace can put one — or
       // on a bad day both — over. Each rolls away from the contact, and the
@@ -663,9 +918,56 @@ function resolveContacts(field: ReadonlyArray<SimRacer>, trackLength: number): v
       // empty the field, and a crash that never happens is wallpaper the
       // other way.
       if ((a.speed + b.speed) / MAX_SPEED > CRASH_BUMP_PACE) {
-        if (Math.random() < CRASH_BUMP_CHANCE) beginCrash(a, side)
-        if (Math.random() < CRASH_BUMP_CHANCE) beginCrash(b, -side)
+        if (Math.random() < CRASH_BUMP_CHANCE) beginCrash(a, i, side, fx)
+        if (Math.random() < CRASH_BUMP_CHANCE) beginCrash(b, j, -side, fx)
       }
     }
   }
+}
+
+/**
+ * Places a car another screen is driving.
+ *
+ * Dead reckoning between poses: the car keeps its reported speed along the
+ * lap so it never stutters at the send rate, and the reported position pulls
+ * the error out underneath. Everything the effects layer watches — the
+ * counters, the wreck timers — is copied outright, so a crash on the driver's
+ * screen bangs on this one too.
+ */
+function applyRemotePose(racer: SimRacer, pose: RacePose, dt: number, trackLength: number): void {
+  const k = 1 - Math.exp(-dt / REMOTE_SMOOTHING)
+  racer.speed += (pose.speed - racer.speed) * k
+  racer.t = (racer.t + (racer.speed * dt) / trackLength) % 1
+  let gap = (pose.t - racer.t) % 1
+  if (gap > 0.5) gap -= 1
+  else if (gap < -0.5) gap += 1
+  racer.t = (racer.t + gap * k + 1) % 1
+  // Same lap as reported, unless this car is just across the line the
+  // report was just short of, or vice versa.
+  const lapSkew = racer.t < pose.t - 0.5 ? 1 : racer.t > pose.t + 0.5 ? -1 : 0
+  const lap = pose.lap + lapSkew
+  if (lap > racer.lap) {
+    racer.lapTimes.push(racer.lapClock)
+    if (racer.lapTimes.length > MAX_RECORDED_LAPS) racer.lapTimes.shift()
+    racer.lapClock = 0
+  }
+  racer.lap = lap
+  racer.lateral += (pose.lateral - racer.lateral) * k
+  racer.lateralVelocity = 0
+  racer.yaw += (pose.yaw - racer.yaw) * k
+  racer.steer += (pose.steer - racer.steer) * k
+  racer.driftLoad += (pose.driftLoad - racer.driftLoad) * k
+  racer.speedScale = 1
+  racer.crashTimer = pose.crashTimer
+  racer.crashDuration = pose.crashDuration
+  racer.crashRolls = pose.crashRolls
+  racer.crashSpin = pose.crashSpin
+  // The pose does not carry the flip, so a remote wreck is always the plain
+  // tumble here. Cleared rather than left over from a local crash.
+  racer.crashFlip = 0
+  racer.bumpCount = pose.bumpCount
+  racer.wallCount = pose.wallCount
+  racer.crashCount = pose.crashCount
+  racer.impactT = pose.impactT
+  racer.impactLateral = pose.impactLateral
 }

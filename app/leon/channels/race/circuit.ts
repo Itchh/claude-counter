@@ -1,5 +1,12 @@
 import * as THREE from 'three'
 import type { GroundField } from './groundField'
+import type { BarrierField } from './barrierField'
+import {
+  corridorFromWalls,
+  describeBoundaries,
+  type CorridorSample,
+  type RoadCorridor,
+} from './corridor'
 import type { TrackDefinition, TrackFrame } from './tracks/types'
 
 // The circuit. A closed Catmull-Rom spline is the whole source of truth: the
@@ -37,29 +44,11 @@ export interface HeightField {
   readonly data: Float32Array
 }
 
-/**
- * The gap the cars actually have to drive down, measured around the lap.
- *
- * Two numbers per sample, both in track units sideways off the traced
- * centreline: where the middle of the free road is, and how much of it there
- * is either side of that middle. A circuit with no measurement runs on its
- * nominal half width, which is what every track did before — and is exactly
- * the assumption that put cars through the barriers wherever the real road
- * was narrower than the number, or the trace ran off to one side of it.
- */
-export interface RoadCorridor {
-  readonly samples: number
-  /** Lateral offset of the free road's centre from the spline, per sample. */
-  readonly centre: Float32Array
-  /** Half the free width, measured around that centre. */
-  readonly halfWidth: Float32Array
-}
-
-/** Somewhere to put a corridor lookup without allocating in a frame loop. */
-export interface CorridorSample {
-  centre: number
-  halfWidth: number
-}
+// The corridor the cars are held inside, and the measured boundaries it is
+// derived from, both live in corridor.ts now — they are shared with the bake
+// and with TrackModel's fallback measurement. Re-exported here because most
+// of the channel asks the circuit for them.
+export type { RoadCorridor, CorridorSample } from './corridor'
 
 export interface Circuit {
   readonly definition: TrackDefinition
@@ -156,6 +145,8 @@ export interface Circuit {
    * Null clears it, and the circuit falls back to its nominal width.
    */
   setCorridor(corridor: RoadCorridor | null): void
+  /** True when this circuit's boundaries came from the bake, not the browser. */
+  hasBakedCorridor(): boolean
   /** True once a corridor has been measured. */
   hasCorridor(): boolean
   /**
@@ -198,6 +189,32 @@ export interface Circuit {
    * below, the valley wins and the camera stays buried.
    */
   groundBelow(x: number, z: number, y: number): number
+  /**
+   * Registers the circuit's walls, so the camera can ask about them too.
+   *
+   * The barrier index is built to measure the road's width and was thrown
+   * away afterwards. The camera wants the same triangles for a different
+   * reason: a tunnel portal, a rock face and a pit wall are all walls, and
+   * all three are things a shot can end up standing inside.
+   */
+  setBarriers(field: BarrierField | null): void
+  /**
+   * Distance to the first piece of world along a ray, or `Infinity` if it
+   * travels `maxDistance` through open air. Direction must be unit length.
+   *
+   * Both indexes are asked, because between them they hold the whole model:
+   * the ground index keeps what faces up, the barrier index what stands on
+   * edge, and a tunnel is made of one of each.
+   */
+  sightDistance(
+    x: number,
+    y: number,
+    z: number,
+    dirX: number,
+    dirY: number,
+    dirZ: number,
+    maxDistance: number,
+  ): number
   /**
    * Road surface as a flat ribbon of quads. Only used by the procedural
    * circuit; an imported track brings its own tarmac.
@@ -253,8 +270,29 @@ export function createCircuit(definition: TrackDefinition): Circuit {
   // See setHeightField on the interface. Read every frame by sampleInto,
   // so it lives in a closure rather than behind any kind of lookup.
   let heightField: HeightField | null = null
-  let corridor: RoadCorridor | null = null
+
+  // The walls, where the circuit has been measured. A baked track carries its
+  // boundaries in its own JSON — see scripts/bakeCorridor.mjs and
+  // corridor.ts — so the corridor exists from the moment the circuit does,
+  // rather than a second or two later when the model has finished loading and
+  // can be raycast. That gap used to be a lap run on the nominal width with
+  // nothing holding the field off the barriers.
+  //
+  // The procedural oval has no boundaries and wants none: its road is built
+  // from this very spline, so its nominal width is not an approximation of a
+  // road, it is the road.
+  const bakedCorridor: RoadCorridor | null = definition.boundaries
+    ? corridorFromWalls(definition.boundaries, halfWidth)
+    : null
+  let corridor: RoadCorridor | null = bakedCorridor
+  if (definition.boundaries) {
+    console.info(
+      `${definition.slug}: boundaries from the bake — ` +
+        `${describeBoundaries(definition.boundaries, halfWidth)}.`,
+    )
+  }
   let ground: GroundField | null = null
+  let barriers: BarrierField | null = null
 
   /**
    * Linear interpolation around the lap, which wraps. Two samples either side
@@ -317,6 +355,24 @@ export function createCircuit(definition: TrackDefinition): Circuit {
 
   const groundBelow = (x: number, z: number, y: number): number =>
     ground === null ? Number.NaN : ground.highestBelow(x, z, y)
+
+  const sightDistance = (
+    x: number,
+    y: number,
+    z: number,
+    dirX: number,
+    dirY: number,
+    dirZ: number,
+    maxDistance: number,
+  ): number => {
+    const floor =
+      ground === null ? Infinity : ground.firstHit(x, y, z, dirX, dirY, dirZ, maxDistance)
+    const wall =
+      barriers === null
+        ? Infinity
+        : barriers.firstHit(x, y, z, dirX, dirY, dirZ, maxDistance)
+    return Math.min(floor, wall)
+  }
 
   const sample = (t: number, lateral: number): TrackFrame => {
     const wrapped = ((t % 1) + 1) % 1
@@ -427,10 +483,15 @@ export function createCircuit(definition: TrackDefinition): Circuit {
     setHeightField: (field) => {
       heightField = field
     },
+    // Null restores the baked boundaries rather than clearing the corridor
+    // outright. A model unmounting is not evidence that the walls moved, and
+    // the next circuit's cars would otherwise spend their first seconds on
+    // the nominal width with nothing holding them off the rails.
     setCorridor: (measured) => {
-      corridor = measured
+      corridor = measured ?? bakedCorridor
     },
     hasCorridor: () => corridor !== null,
+    hasBakedCorridor: () => bakedCorridor !== null,
     corridorInto,
     setGround: (field) => {
       ground = field
@@ -438,6 +499,10 @@ export function createCircuit(definition: TrackDefinition): Circuit {
     hasGround: () => ground !== null,
     groundAt,
     groundBelow,
+    setBarriers: (field) => {
+      barriers = field
+    },
+    sightDistance,
     buildRoadGeometry: (segments) => buildRibbon(segments, -halfWidth, halfWidth, 0),
     buildKerbGeometry: (segments, side, width, height) =>
       buildRibbon(segments, halfWidth * side, (halfWidth + width) * side, height),

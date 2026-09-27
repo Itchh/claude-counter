@@ -1,14 +1,18 @@
 'use client'
 
-import { useQuery } from 'convex/react'
+import { useCachedQuery } from '@/lib/useCachedQuery'
 import { api } from '@/convex/_generated/api'
 import { fmtTokensShort } from '@/lib/formatters'
 import { MODEL_FAMILIES, toModelSegments, type ModelFamily } from '@/lib/models'
 import { useBurnRates } from '@/lib/useBurnRates'
+import { useMe } from '../control/useMe'
 import type { PaintShopDriver } from '../channels/race/PaintShop'
 import { ARCADE, ARCADE_CHROME_RAMP, FONTS, PS1, UI_TYPE } from '../ps1/theme'
-import { Ps1Car } from '../ps1/Ps1Car'
-import { chassisFor } from '../channels/race/cars'
+import { Ps1Rig, type RigChoice } from '../ps1/Ps1Rig'
+import { chassisOf } from '../channels/race/cars'
+import { airframeOf } from '../channels/dogfight/airframes'
+import { fighterOf } from '../channels/fight/fighters'
+import type { CabinetGame } from './games'
 import { CandyBar, Flame, ON_FIRE_TOKENS_PER_MIN } from './CandyBar'
 
 // The leaderboard, as the window behind the top-right button.
@@ -25,10 +29,11 @@ import { CandyBar, Flame, ON_FIRE_TOKENS_PER_MIN } from './CandyBar'
 // is where a person looks for their own name, so it is also the shortest
 // route from finding yourself to changing what you are driving.
 //
-// The rank numerals are gone. Each place is its driver's own car on a
-// turntable — the same model the race is running outside the window — because
-// the plinth height and the order already say the place, and the numeral was
-// spending the largest element on the screen's least surprising fact.
+// The rank numerals are gone. Each place is its driver's own rig on a
+// turntable — the car, plane or fighter the game outside the window is
+// running — because the plinth height and the order already say the place,
+// and the numeral was spending the largest element on the screen's least
+// surprising fact.
 
 /** Spin speed of a podium car maxes out at this burn rate. */
 const INTENSITY_CEILING_TOKENS_PER_MIN = 60_000
@@ -58,10 +63,25 @@ interface BoardRow {
   /** Paint-shop choices, so the podium car matches the one on the circuit. */
   readonly paint: string | null
   readonly livery: string | null
+  readonly chassis: number | null
+  /** The hangar's and the dojo's, for the board over those games. */
+  readonly airframe: number | null
+  readonly planePaint: string | null
+  readonly planeLivery: string | null
+  readonly fighter: number | null
+  readonly fightPaint: string | null
+  readonly fightLivery: string | null
   readonly totalTokens: number
   readonly tokensByModel: Readonly<Record<string, number>>
   readonly isOnline: boolean
   readonly burnRate: number
+}
+
+/** The rig a row stands behind, for the game on screen. */
+function rigFor(row: BoardRow, game: CabinetGame): RigChoice {
+  if (game === 'dogfight') return { index: airframeOf(row.key, row.airframe), paint: row.planePaint, livery: row.planeLivery }
+  if (game === 'fight') return { index: fighterOf(row.key, row.fighter), paint: row.fightPaint, livery: row.fightLivery }
+  return { index: chassisOf(row.key, row.chassis), paint: row.paint, livery: row.livery }
 }
 
 function fallbackColor(rank: number): string {
@@ -72,19 +92,21 @@ function fallbackColor(rank: number): string {
 /**
  * What the paint shop needs about a driver, from what the board already knows.
  *
- * The chassis is the driver's own — chassisFor(key) — which is also what the
- * circuit and the board draw, so the car in the window is the car on the
- * track and the car on the plinth, whatever order either happens to be in.
+ * The chassis is the driver's own — chassisOf(key, chosen) — which is also
+ * what the circuit and the board draw, so the car in the window is the car on
+ * the track and the car on the plinth, whatever order either happens to be in.
  */
 function toDriver(row: BoardRow): PaintShopDriver {
   return {
     key: row.key,
     name: row.name,
-    index: chassisFor(row.key),
+    index: chassisOf(row.key, row.chassis),
+    chassis: row.chassis,
     color: row.color,
     paint: row.paint,
     livery: row.livery,
     score: row.totalTokens,
+    velocity: row.burnRate,
   }
 }
 
@@ -122,12 +144,23 @@ function Pick({
 
 export function PodiumBoard({
   onSelectDriver,
+  game = 'race',
 }: {
   /** Opens the paint shop for a driver. Absent means the board is read-only. */
   readonly onSelectDriver?: (driver: PaintShopDriver) => void
+  /** Which game's rigs stand on the plinths. */
+  readonly game?: CabinetGame
 } = {}): React.ReactElement {
-  const data = useQuery(api.leaderboard.get)
+  const data = useCachedQuery('leaderboard', api.leaderboard.get, {})
   const burnRates = useBurnRates(data?.leaderboard, data?.updatedAt)
+  const me = useMe()
+
+  // Only your own row opens the shop: setLivery writes to whoever is signed
+  // in, so every other row stays read-only rather than saving onto your car.
+  const selectFor = (row: BoardRow): (() => void) | undefined => {
+    if (onSelectDriver === undefined || !me || row.key !== me.key) return undefined
+    return () => onSelectDriver(toDriver(row))
+  }
 
   if (!data) return <BoardSkeleton />
 
@@ -141,6 +174,13 @@ export function PodiumBoard({
     color: entry.color ?? fallbackColor(entry.rank),
     paint: entry.paint ?? null,
     livery: entry.livery ?? null,
+    chassis: entry.chassis ?? null,
+    airframe: entry.airframe ?? null,
+    planePaint: entry.planePaint ?? null,
+    planeLivery: entry.planeLivery ?? null,
+    fighter: entry.fighter ?? null,
+    fightPaint: entry.fightPaint ?? null,
+    fightLivery: entry.fightLivery ?? null,
     totalTokens: entry.totalTokens,
     tokensByModel: entry.tokensByModel,
     isOnline: entry.isOnline,
@@ -181,7 +221,7 @@ export function PodiumBoard({
             <Pick
               key={row.key}
               label={`Paint shop — ${row.name}`}
-              onSelect={onSelectDriver === undefined ? undefined : () => onSelectDriver(toDriver(row))}
+              onSelect={selectFor(row)}
               style={{
                 ...PODIUM_COLUMN,
                 display: 'flex',
@@ -190,12 +230,11 @@ export function PodiumBoard({
                 gap: '6px',
               }}
             >
-              <Ps1Car
+              <Ps1Rig
+                game={game}
+                rig={rigFor(row, game)}
                 color={row.color}
                 size={isFirst ? PODIUM_CAR_SIZE.first : PODIUM_CAR_SIZE.other}
-                variant={chassisFor(row.key)}
-                paint={row.paint}
-                livery={row.livery}
                 label={row.name}
                 intensity={Math.min(1, row.burnRate / INTENSITY_CEILING_TOKENS_PER_MIN)}
               />
@@ -274,7 +313,7 @@ export function PodiumBoard({
           <Pick
             key={row.key}
             label={`Paint shop — ${row.name}`}
-            onSelect={onSelectDriver === undefined ? undefined : () => onSelectDriver(toDriver(row))}
+            onSelect={selectFor(row)}
             style={{
               display: 'flex',
               alignItems: 'center',

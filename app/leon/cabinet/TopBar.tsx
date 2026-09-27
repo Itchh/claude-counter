@@ -1,6 +1,6 @@
 'use client'
 
-import { ARCADE, FONTS, UI_TYPE } from '../ps1/theme'
+import { ARCADE, UI_TYPE } from '../ps1/theme'
 
 // The cabinet's whole chrome: two words in the top-right corner, sitting on
 // the picture rather than in a bar above it.
@@ -13,10 +13,11 @@ import { ARCADE, FONTS, UI_TYPE } from '../ps1/theme'
 // the panel under the race. There is always one lit, because there is always
 // a panel showing, so the lit one never turns into "Close".
 
-export type CabinetWindowId = 'board' | 'menu'
+export type CabinetWindowId = 'board' | 'account' | 'menu' | 'setup'
 
 const BUTTONS: ReadonlyArray<{ id: CabinetWindowId; label: string }> = [
   { id: 'board', label: 'Leaderboard' },
+  { id: 'account', label: 'Account' },
   { id: 'menu', label: 'Menu' },
 ]
 
@@ -51,18 +52,15 @@ export function TopBar({ open, onOpen, layout }: TopBarProps): React.ReactElemen
             aria-selected={isTabs ? isOpen : undefined}
             aria-expanded={isTabs ? undefined : isOpen}
             onClick={() => onOpen(isOpen && !isTabs ? null : button.id)}
-            className="gt-label"
+            className={isOpen ? 'gt-label arc-button arc-button-on' : 'gt-label arc-button'}
             style={{
               height: `${BUTTON_HEIGHT_PX}px`,
               padding: '0 20px',
               border: 'none',
               flex: isTabs ? 1 : undefined,
               background: isOpen ? ARCADE.amber : isTabs ? ARCADE.ground : 'rgba(5, 5, 5, 0.82)',
-              color: isOpen ? '#000' : ARCADE.silver,
               boxShadow: isOpen || isTabs ? 'none' : `inset 0 0 0 2px ${ARCADE.rule}`,
-              fontFamily: FONTS.body,
               fontSize: `${UI_TYPE.body + 1}px`,
-              letterSpacing: '0.12em',
             }}
           >
             {isOpen && !isTabs ? 'Close' : button.label}

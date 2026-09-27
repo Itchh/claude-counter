@@ -1,0 +1,606 @@
+{
+  "fighters": [
+    {
+      "slug": "kaida",
+      "name": "Kaida",
+      "note": "Blue gi, white sash",
+      "height": 1.83,
+      "width": 1.012,
+      "depth": 0.572,
+      "triangles": 3186,
+      "clips": {
+        "Dance_Loop": {
+          "duration": 1,
+          "strikeAt": null,
+          "reach": null
+        },
+        "Death01": {
+          "duration": 2.375,
+          "strikeAt": null,
+          "reach": null
+        },
+        "Hit_Chest": {
+          "duration": 0.333,
+          "strikeAt": null,
+          "reach": null
+        },
+        "Hit_Head": {
+          "duration": 0.417,
+          "strikeAt": null,
+          "reach": null
+        },
+        "Idle_Loop": {
+          "duration": 2.5,
+          "strikeAt": null,
+          "reach": null
+        },
+        "Punch_Cross": {
+          "duration": 1,
+          "strikeAt": 0.3,
+          "reach": 0.627
+        },
+        "Punch_Enter": {
+          "duration": 0.833,
+          "strikeAt": null,
+          "reach": null
+        },
+        "Punch_Jab": {
+          "duration": 0.833,
+          "strikeAt": 0.25,
+          "reach": 0.732
+        },
+        "Walk_Loop": {
+          "duration": 1.333,
+          "strikeAt": null,
+          "reach": null
+        },
+        "Kick": {
+          "duration": 0.46,
+          "strikeAt": 0.575,
+          "reach": 0.802
+        },
+        "Kick_Round": {
+          "duration": 0.5,
+          "strikeAt": 0.575,
+          "reach": 0.677
+        },
+        "Block": {
+          "duration": 0.4,
+          "strikeAt": null,
+          "reach": null
+        },
+        "Hit_Stagger": {
+          "duration": 0.45,
+          "strikeAt": null,
+          "reach": null
+        },
+        "Guard": {
+          "duration": 2,
+          "strikeAt": null,
+          "reach": null
+        },
+        "Guard_Shift": {
+          "duration": 1.2,
+          "strikeAt": null,
+          "reach": null
+        }
+      }
+    },
+    {
+      "slug": "roan",
+      "name": "Roan",
+      "note": "Long reach, longer memory",
+      "height": 1.83,
+      "width": 0.707,
+      "depth": 0.321,
+      "triangles": 5919,
+      "clips": {
+        "Dance_Loop": {
+          "duration": 1,
+          "strikeAt": null,
+          "reach": null
+        },
+        "Death01": {
+          "duration": 2.375,
+          "strikeAt": null,
+          "reach": null
+        },
+        "Hit_Chest": {
+          "duration": 0.333,
+          "strikeAt": null,
+          "reach": null
+        },
+        "Hit_Head": {
+          "duration": 0.417,
+          "strikeAt": null,
+          "reach": null
+        },
+        "Idle_Loop": {
+          "duration": 2.5,
+          "strikeAt": null,
+          "reach": null
+        },
+        "Punch_Cross": {
+          "duration": 1,
+          "strikeAt": 0.3,
+          "reach": 0.627
+        },
+        "Punch_Enter": {
+          "duration": 0.833,
+          "strikeAt": null,
+          "reach": null
+        },
+        "Punch_Jab": {
+          "duration": 0.833,
+          "strikeAt": 0.25,
+          "reach": 0.732
+        },
+        "Walk_Loop": {
+          "duration": 1.333,
+          "strikeAt": null,
+          "reach": null
+        },
+        "Kick": {
+          "duration": 0.46,
+          "strikeAt": 0.575,
+          "reach": 0.802
+        },
+        "Kick_Round": {
+          "duration": 0.5,
+          "strikeAt": 0.575,
+          "reach": 0.677
+        },
+        "Block": {
+          "duration": 0.4,
+          "strikeAt": null,
+          "reach": null
+        },
+        "Hit_Stagger": {
+          "duration": 0.45,
+          "strikeAt": null,
+          "reach": null
+        },
+        "Guard": {
+          "duration": 2,
+          "strikeAt": null,
+          "reach": null
+        },
+        "Guard_Shift": {
+          "duration": 1.2,
+          "strikeAt": null,
+          "reach": null
+        }
+      }
+    },
+    {
+      "slug": "mireille",
+      "name": "Mireille",
+      "note": "Fights on the front foot",
+      "height": 1.83,
+      "width": 0.896,
+      "depth": 0.484,
+      "triangles": 5896,
+      "clips": {
+        "Dance_Loop": {
+          "duration": 1,
+          "strikeAt": null,
+          "reach": null
+        },
+        "Death01": {
+          "duration": 2.375,
+          "strikeAt": null,
+          "reach": null
+        },
+        "Hit_Chest": {
+          "duration": 0.333,
+          "strikeAt": null,
+          "reach": null
+        },
+        "Hit_Head": {
+          "duration": 0.417,
+          "strikeAt": null,
+          "reach": null
+        },
+        "Idle_Loop": {
+          "duration": 2.5,
+          "strikeAt": null,
+          "reach": null
+        },
+        "Punch_Cross": {
+          "duration": 1,
+          "strikeAt": 0.3,
+          "reach": 0.627
+        },
+        "Punch_Enter": {
+          "duration": 0.833,
+          "strikeAt": null,
+          "reach": null
+        },
+        "Punch_Jab": {
+          "duration": 0.833,
+          "strikeAt": 0.25,
+          "reach": 0.732
+        },
+        "Walk_Loop": {
+          "duration": 1.333,
+          "strikeAt": null,
+          "reach": null
+        },
+        "Kick": {
+          "duration": 0.46,
+          "strikeAt": 0.575,
+          "reach": 0.802
+        },
+        "Kick_Round": {
+          "duration": 0.5,
+          "strikeAt": 0.575,
+          "reach": 0.677
+        },
+        "Block": {
+          "duration": 0.4,
+          "strikeAt": null,
+          "reach": null
+        },
+        "Hit_Stagger": {
+          "duration": 0.45,
+          "strikeAt": null,
+          "reach": null
+        },
+        "Guard": {
+          "duration": 2,
+          "strikeAt": null,
+          "reach": null
+        },
+        "Guard_Shift": {
+          "duration": 1.2,
+          "strikeAt": null,
+          "reach": null
+        }
+      }
+    },
+    {
+      "slug": "tobias",
+      "name": "Tobias",
+      "note": "Broad shoulders, short fuse",
+      "height": 1.83,
+      "width": 0.978,
+      "depth": 0.583,
+      "triangles": 3936,
+      "clips": {
+        "Dance_Loop": {
+          "duration": 1,
+          "strikeAt": null,
+          "reach": null
+        },
+        "Death01": {
+          "duration": 2.375,
+          "strikeAt": null,
+          "reach": null
+        },
+        "Hit_Chest": {
+          "duration": 0.333,
+          "strikeAt": null,
+          "reach": null
+        },
+        "Hit_Head": {
+          "duration": 0.417,
+          "strikeAt": null,
+          "reach": null
+        },
+        "Idle_Loop": {
+          "duration": 2.5,
+          "strikeAt": null,
+          "reach": null
+        },
+        "Punch_Cross": {
+          "duration": 1,
+          "strikeAt": 0.3,
+          "reach": 0.627
+        },
+        "Punch_Enter": {
+          "duration": 0.833,
+          "strikeAt": null,
+          "reach": null
+        },
+        "Punch_Jab": {
+          "duration": 0.833,
+          "strikeAt": 0.25,
+          "reach": 0.732
+        },
+        "Walk_Loop": {
+          "duration": 1.333,
+          "strikeAt": null,
+          "reach": null
+        },
+        "Kick": {
+          "duration": 0.46,
+          "strikeAt": 0.575,
+          "reach": 0.802
+        },
+        "Kick_Round": {
+          "duration": 0.5,
+          "strikeAt": 0.575,
+          "reach": 0.677
+        },
+        "Block": {
+          "duration": 0.4,
+          "strikeAt": null,
+          "reach": null
+        },
+        "Hit_Stagger": {
+          "duration": 0.45,
+          "strikeAt": null,
+          "reach": null
+        },
+        "Guard": {
+          "duration": 2,
+          "strikeAt": null,
+          "reach": null
+        },
+        "Guard_Shift": {
+          "duration": 1.2,
+          "strikeAt": null,
+          "reach": null
+        }
+      }
+    },
+    {
+      "slug": "sable",
+      "name": "Sable",
+      "note": "Never blocks twice",
+      "height": 1.83,
+      "width": 0.908,
+      "depth": 0.429,
+      "triangles": 2572,
+      "clips": {
+        "Dance_Loop": {
+          "duration": 1,
+          "strikeAt": null,
+          "reach": null
+        },
+        "Death01": {
+          "duration": 2.375,
+          "strikeAt": null,
+          "reach": null
+        },
+        "Hit_Chest": {
+          "duration": 0.333,
+          "strikeAt": null,
+          "reach": null
+        },
+        "Hit_Head": {
+          "duration": 0.417,
+          "strikeAt": null,
+          "reach": null
+        },
+        "Idle_Loop": {
+          "duration": 2.5,
+          "strikeAt": null,
+          "reach": null
+        },
+        "Punch_Cross": {
+          "duration": 1,
+          "strikeAt": 0.3,
+          "reach": 0.627
+        },
+        "Punch_Enter": {
+          "duration": 0.833,
+          "strikeAt": null,
+          "reach": null
+        },
+        "Punch_Jab": {
+          "duration": 0.833,
+          "strikeAt": 0.25,
+          "reach": 0.732
+        },
+        "Walk_Loop": {
+          "duration": 1.333,
+          "strikeAt": null,
+          "reach": null
+        },
+        "Kick": {
+          "duration": 0.46,
+          "strikeAt": 0.575,
+          "reach": 0.802
+        },
+        "Kick_Round": {
+          "duration": 0.5,
+          "strikeAt": 0.575,
+          "reach": 0.677
+        },
+        "Block": {
+          "duration": 0.4,
+          "strikeAt": null,
+          "reach": null
+        },
+        "Hit_Stagger": {
+          "duration": 0.45,
+          "strikeAt": null,
+          "reach": null
+        },
+        "Guard": {
+          "duration": 2,
+          "strikeAt": null,
+          "reach": null
+        },
+        "Guard_Shift": {
+          "duration": 1.2,
+          "strikeAt": null,
+          "reach": null
+        }
+      }
+    },
+    {
+      "slug": "ines",
+      "name": "Inés",
+      "note": "Patient until she is not",
+      "height": 1.83,
+      "width": 0.806,
+      "depth": 0.411,
+      "triangles": 5303,
+      "clips": {
+        "Dance_Loop": {
+          "duration": 1,
+          "strikeAt": null,
+          "reach": null
+        },
+        "Death01": {
+          "duration": 2.375,
+          "strikeAt": null,
+          "reach": null
+        },
+        "Hit_Chest": {
+          "duration": 0.333,
+          "strikeAt": null,
+          "reach": null
+        },
+        "Hit_Head": {
+          "duration": 0.417,
+          "strikeAt": null,
+          "reach": null
+        },
+        "Idle_Loop": {
+          "duration": 2.5,
+          "strikeAt": null,
+          "reach": null
+        },
+        "Punch_Cross": {
+          "duration": 1,
+          "strikeAt": 0.3,
+          "reach": 0.627
+        },
+        "Punch_Enter": {
+          "duration": 0.833,
+          "strikeAt": null,
+          "reach": null
+        },
+        "Punch_Jab": {
+          "duration": 0.833,
+          "strikeAt": 0.25,
+          "reach": 0.732
+        },
+        "Walk_Loop": {
+          "duration": 1.333,
+          "strikeAt": null,
+          "reach": null
+        },
+        "Kick": {
+          "duration": 0.46,
+          "strikeAt": 0.575,
+          "reach": 0.802
+        },
+        "Kick_Round": {
+          "duration": 0.5,
+          "strikeAt": 0.575,
+          "reach": 0.677
+        },
+        "Block": {
+          "duration": 0.4,
+          "strikeAt": null,
+          "reach": null
+        },
+        "Hit_Stagger": {
+          "duration": 0.45,
+          "strikeAt": null,
+          "reach": null
+        },
+        "Guard": {
+          "duration": 2,
+          "strikeAt": null,
+          "reach": null
+        },
+        "Guard_Shift": {
+          "duration": 1.2,
+          "strikeAt": null,
+          "reach": null
+        }
+      }
+    },
+    {
+      "slug": "hollis",
+      "name": "Hollis",
+      "note": "Counter-puncher",
+      "height": 1.83,
+      "width": 0.908,
+      "depth": 0.429,
+      "triangles": 2572,
+      "clips": {
+        "Dance_Loop": {
+          "duration": 1,
+          "strikeAt": null,
+          "reach": null
+        },
+        "Death01": {
+          "duration": 2.375,
+          "strikeAt": null,
+          "reach": null
+        },
+        "Hit_Chest": {
+          "duration": 0.333,
+          "strikeAt": null,
+          "reach": null
+        },
+        "Hit_Head": {
+          "duration": 0.417,
+          "strikeAt": null,
+          "reach": null
+        },
+        "Idle_Loop": {
+          "duration": 2.5,
+          "strikeAt": null,
+          "reach": null
+        },
+        "Punch_Cross": {
+          "duration": 1,
+          "strikeAt": 0.3,
+          "reach": 0.627
+        },
+        "Punch_Enter": {
+          "duration": 0.833,
+          "strikeAt": null,
+          "reach": null
+        },
+        "Punch_Jab": {
+          "duration": 0.833,
+          "strikeAt": 0.25,
+          "reach": 0.732
+        },
+        "Walk_Loop": {
+          "duration": 1.333,
+          "strikeAt": null,
+          "reach": null
+        },
+        "Kick": {
+          "duration": 0.46,
+          "strikeAt": 0.575,
+          "reach": 0.802
+        },
+        "Kick_Round": {
+          "duration": 0.5,
+          "strikeAt": 0.575,
+          "reach": 0.677
+        },
+        "Block": {
+          "duration": 0.4,
+          "strikeAt": null,
+          "reach": null
+        },
+        "Hit_Stagger": {
+          "duration": 0.45,
+          "strikeAt": null,
+          "reach": null
+        },
+        "Guard": {
+          "duration": 2,
+          "strikeAt": null,
+          "reach": null
+        },
+        "Guard_Shift": {
+          "duration": 1.2,
+          "strikeAt": null,
+          "reach": null
+        }
+      }
+    }
+  ]
+}

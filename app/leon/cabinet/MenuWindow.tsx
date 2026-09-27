@@ -39,10 +39,20 @@ const CONTROL_GROUPS: ReadonlyArray<ControlGroup> = [
     title: 'Cabinet',
     entries: [
       { keys: ['L'], label: 'Leaderboard', detail: 'Open the board over the race. Same as the button.' },
+      { keys: ['U'], label: 'Account', detail: 'Sign in, your devices, your day, your laps.' },
       { keys: ['M'], label: 'Menu', detail: 'This window.' },
-      { keys: ['G'], label: 'Game', detail: 'Flick to the next cartridge without visiting the shelf.' },
+      { keys: ['G'], label: 'Game', detail: 'Flick to the next game without going back to the room.' },
       { keys: ['Esc'], label: 'Close', detail: 'Close whichever window is open and resume the broadcast.' },
-      { keys: ['1–9'], label: 'Player', detail: 'Ride with a driver by their place in the order. Same digit again hands the camera back.' },
+      { keys: ['1–9'], label: 'Player', detail: 'Ride with a player by their place in the order — a driver, a fighter, a pilot. Same digit again hands the camera back.' },
+    ],
+  },
+  {
+    title: 'Taking the wheel',
+    entries: [
+      { keys: ['T'], label: 'Take control', detail: 'Signed in and your car is out there: drive it yourself. Esc hands it back to the machine.' },
+      { keys: ['↑', '↓', '←', '→'], label: 'Race', detail: 'Throttle, brake and steer. Space burns nitro banked from your tokens.' },
+      { keys: ['←', '→', 'Z', 'X', '↓'], label: 'Fight', detail: 'Move, punch, kick, block. You join the next card.' },
+      { keys: ['←', '→', '↑', '↓', 'W', 'S'], label: 'Dogfight', detail: 'Bank, climb and dive; W and S move the throttle. Space fires at whatever is in the sight.' },
     ],
   },
   {
@@ -107,7 +117,7 @@ function KeyCap({ glyph }: { readonly glyph: string }): React.ReactElement {
   )
 }
 
-function CommandRow({ entry }: { readonly entry: ReporterCommand }): React.ReactElement {
+export function CommandRow({ entry }: { readonly entry: ReporterCommand }): React.ReactElement {
   const [copied, setCopied] = useState(false)
   const [failed, setFailed] = useState(false)
   const color = TONE_COLOR[entry.tone]
@@ -136,16 +146,13 @@ function CommandRow({ entry }: { readonly entry: ReporterCommand }): React.React
         <button
           type="button"
           onClick={() => void handleCopy()}
-          className="gt-label"
+          className={copied ? 'gt-label arc-button arc-button-on' : 'gt-label arc-button'}
           style={{
             height: '36px',
             padding: '0 14px',
             border: 'none',
             background: copied ? color : '#2c2c34',
-            color: copied ? '#000' : ARCADE.silver,
-            fontFamily: FONTS.body,
             fontSize: `${UI_TYPE.caption}px`,
-            letterSpacing: '0.14em',
             boxShadow: copied ? 'none' : `inset 2px 2px 0 0 ${GT.metalHi}, inset -2px -2px 0 0 ${GT.metalLo}`,
           }}
         >
@@ -177,9 +184,9 @@ function CommandRow({ entry }: { readonly entry: ReporterCommand }): React.React
 }
 
 interface MenuWindowProps {
-  /** What the screen is showing: a game, or the shelf itself. */
+  /** What the screen is showing: a game, or the room itself. */
   readonly screen: CabinetScreen
-  readonly onBackToShelf: () => void
+  readonly onBackToRoom: () => void
   /** Whether the broadcast's sound is armed. */
   readonly audioOn: boolean
   readonly onToggleAudio: () => void
@@ -250,12 +257,12 @@ function SoundSelect({
 }
 
 /**
- * The way to another game is the shelf, not a list: the menu names what is
- * in the machine and offers to put it back. The library itself lives in
- * games.ts, and the shelf draws it.
+ * The way to another game is the arcade in the room, not a list here: the menu names what is
+ * in the machine and offers the way back. The library itself lives in
+ * games.ts, and the arcade's screen draws it.
  */
-function ShelfRow({ screen, onBackToShelf }: Pick<MenuWindowProps, 'screen' | 'onBackToShelf'>): React.ReactElement {
-  const current = screen !== 'shelf' ? gameInfo(screen) : null
+function RoomRow({ screen, onBackToRoom }: Pick<MenuWindowProps, 'screen' | 'onBackToRoom'>): React.ReactElement {
+  const current = screen !== 'room' ? gameInfo(screen) : null
   return (
     <section style={{ background: ARCADE.groundDeep, padding: '18px 20px', display: 'flex', flexDirection: 'column', gap: '12px' }}>
       <span className="gt-label" style={{ fontFamily: FONTS.body, fontSize: `${UI_TYPE.heading}px`, color: ARCADE.label }}>
@@ -267,25 +274,25 @@ function ShelfRow({ screen, onBackToShelf }: Pick<MenuWindowProps, 'screen' | 'o
             className="gt-label"
             style={{ fontFamily: FONTS.body, fontSize: `${UI_TYPE.body}px`, color: ARCADE.amber }}
           >
-            {current ? `▸ ${current.name}` : '▸ The Shelf'}
+            {current ? `▸ ${current.name}` : '▸ The Room'}
           </span>
           <span style={PROSE}>
-            {current ? current.blurb : 'Browsing the library.'}
+            {current ? current.blurb : 'Standing at the arcade.'}
           </span>
         </div>
         {current !== null && (
           <button
             type="button"
-            onClick={onBackToShelf}
+            onClick={onBackToRoom}
             style={{ ...optionStyle(false), flex: 1, justifyContent: 'center' }}
           >
             <span
               className="gt-label"
               style={{ fontFamily: FONTS.body, fontSize: `${UI_TYPE.body}px`, color: ARCADE.value }}
             >
-              Back to Shelf
+              Back to the room
             </span>
-            <span style={PROSE}>Put the cartridge back and pick another game.</span>
+            <span style={PROSE}>Step back from the machine and pick another game. Esc does the same.</span>
           </button>
         )}
       </div>
@@ -293,10 +300,10 @@ function ShelfRow({ screen, onBackToShelf }: Pick<MenuWindowProps, 'screen' | 'o
   )
 }
 
-export function MenuWindow({ screen, onBackToShelf, audioOn, onToggleAudio }: MenuWindowProps): React.ReactElement {
+export function MenuWindow({ screen, onBackToRoom, audioOn, onToggleAudio }: MenuWindowProps): React.ReactElement {
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: '2px', background: ARCADE.rule }}>
-      <ShelfRow screen={screen} onBackToShelf={onBackToShelf} />
+      <RoomRow screen={screen} onBackToRoom={onBackToRoom} />
       <SoundSelect audioOn={audioOn} onToggleAudio={onToggleAudio} />
       <MenuColumns />
     </div>

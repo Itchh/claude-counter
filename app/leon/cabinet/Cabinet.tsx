@@ -1,21 +1,22 @@
 'use client'
 
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { AnimatePresence } from 'motion/react'
 import { RaceChannel } from '../channels/race/RaceChannel'
 import { FightChannel } from '../channels/fight/FightChannel'
 import { PaintShopLayer, type PaintShopDriver } from '../channels/race/PaintShop'
 import { NavigationProvider } from '../ps1/navigation'
 import { SCALED_CHROME, SCALED_PANEL, SCALED_SURFACE } from '../ps1/hudScale'
 import { useNarrowViewport } from '../ps1/useNarrowViewport'
-import { ARCADE } from '../ps1/theme'
+import { ARCADE, FONTS, UI_TYPE } from '../ps1/theme'
 import { TopBar, type CabinetWindowId } from './TopBar'
 import { Window } from './Window'
 import { PodiumBoard } from './PodiumBoard'
 import { MenuWindow } from './MenuWindow'
-import { Shelf } from './Shelf'
+import { SetupWindow } from './SetupWindow'
+import { Bedroom } from '../room/Bedroom'
+import { AccountWindow } from './AccountWindow'
 import { DogfightChannel } from '../channels/dogfight/DogfightChannel'
-import { isCabinetScreen, nextGame, type CabinetGame, type CabinetScreen } from './games'
+import { isCabinetGame, nextGame, type CabinetGame, type CabinetScreen } from './games'
 
 // The cabinet: one screen, and two windows over it.
 //
@@ -47,9 +48,10 @@ const PAINT_SHOP_Z = 96
 /** The tab that is showing when nothing has been asked for. */
 const DEFAULT_NARROW_WINDOW: CabinetWindowId = 'board'
 
-// Which game the screen is running — or the shelf they all live on. Picked
-// by taking a cartridge off the shelf, remembered locally; the library
-// itself lives in games.ts.
+// Which game the screen is running — or the room the machine stands in,
+// which is where every visit starts. The last game picked is remembered
+// locally so the arcade's cursor lands on it; the library itself lives in
+// games.ts.
 const GAME_STORAGE_KEY = 'claude-counter:game'
 
 interface WindowCopy {
@@ -59,7 +61,9 @@ interface WindowCopy {
 
 const WINDOW_COPY: Readonly<Record<CabinetWindowId, WindowCopy>> = {
   board: { title: 'Leaderboard', subtitle: 'Every driver, all time' },
+  account: { title: 'Account', subtitle: 'Your car, your devices, your day' },
   menu: { title: 'Paused', subtitle: 'Broadcast held · reporting never stops' },
+  setup: { title: 'Set up', subtitle: 'Install the reporter, sign in, get on the board' },
 }
 
 /** The menu's title in the stacked layout, where the race is not held. */
@@ -69,26 +73,68 @@ function WindowBody({
   id,
   onSelectDriver,
   screen,
-  onBackToShelf,
+  lastGame,
+  onBackToRoom,
   audioOn,
   onToggleAudio,
 }: {
   readonly id: CabinetWindowId
   readonly onSelectDriver: (driver: PaintShopDriver) => void
   readonly screen: CabinetScreen
-  readonly onBackToShelf: () => void
+  readonly lastGame: CabinetGame | null
+  readonly onBackToRoom: () => void
   readonly audioOn: boolean
   readonly onToggleAudio: () => void
 }): React.ReactElement {
-  return id === 'board' ? (
-    <PodiumBoard onSelectDriver={onSelectDriver} />
-  ) : (
-    <MenuWindow screen={screen} onBackToShelf={onBackToShelf} audioOn={audioOn} onToggleAudio={onToggleAudio} />
+  // The board over a game shows that game's rigs; over the room, the last
+  // game's — the one the screen would return to.
+  if (id === 'board') return <PodiumBoard onSelectDriver={onSelectDriver} game={screen === 'room' ? (lastGame ?? 'race') : screen} />
+  if (id === 'account') return <AccountWindow onSelectDriver={onSelectDriver} />
+  if (id === 'setup') return <SetupWindow />
+  return <MenuWindow screen={screen} onBackToRoom={onBackToRoom} audioOn={audioOn} onToggleAudio={onToggleAudio} />
+}
+
+/** One key and what it does, in the prompt's own type. */
+const KEY_PROMPTS: ReadonlyArray<readonly [string, string]> = [
+  ['G', 'next game'],
+  ['Esc', 'the room'],
+  ['L', 'board'],
+  ['T', 'take control'],
+  ['1–9', 'ride along'],
+]
+
+function KeyPrompt(): React.ReactElement {
+  return (
+    <div
+      className="cab-key-prompt"
+      aria-hidden
+      style={{
+        position: 'absolute',
+        left: '50%',
+        bottom: '22px',
+        transform: 'translateX(-50%)',
+        zIndex: 94,
+        pointerEvents: 'none',
+        display: 'flex',
+        gap: '18px',
+        padding: '8px 14px',
+        background: 'rgba(4, 4, 8, 0.72)',
+        boxShadow: `inset 0 0 0 2px ${ARCADE.rule}`,
+        ...SCALED_CHROME,
+      }}
+    >
+      {KEY_PROMPTS.map(([key, label]) => (
+        <span key={key} className="gt-label" style={{ fontFamily: FONTS.body, fontSize: `${UI_TYPE.caption}px`, color: ARCADE.grey, letterSpacing: '0.12em' }}>
+          <span style={{ color: ARCADE.amber, marginRight: '6px' }}>{key}</span>
+          {label.toUpperCase()}
+        </span>
+      ))}
+    </div>
   )
 }
 
 /**
- * The picture itself: whichever cartridge is in the machine, or the shelf.
+ * The picture itself: whichever cartridge is in the machine, or the room.
  *
  * A visited game is HIDDEN, never unmounted. Unmounting a channel tears its
  * WebGL context down (fiber's teardown force-loses it, on a 500ms delay) at
@@ -105,13 +151,18 @@ function GameScreen({
   paused,
   audioOn,
   onPick,
+  onSetup,
+  inputEnabled,
 }: {
   readonly screen: CabinetScreen
-  /** The cartridge most recently in the machine — the shelf lights its lamp. */
+  /** The cartridge most recently in the machine — the arcade's cursor starts on it. */
   readonly lastGame: CabinetGame | null
   readonly paused: boolean
   readonly audioOn: boolean
   readonly onPick: (game: CabinetGame) => void
+  readonly onSetup: () => void
+  /** False while a window is open over the picture and the keys belong to it. */
+  readonly inputEnabled: boolean
 }): React.ReactElement {
   // Which surfaces have ever been asked for. Mount-on-first-visit keeps the
   // initial load to one channel; after that a surface never leaves the tree.
@@ -144,9 +195,15 @@ function GameScreen({
           <DogfightChannel isLive={screen === 'dogfight'} paused={paused} />
         </div>
       )}
-      {visited.current.has('shelf') && (
-        <div style={layer(screen === 'shelf')}>
-          <Shelf currentGame={lastGame} onPick={onPick} isLive={screen === 'shelf'} />
+      {visited.current.has('room') && (
+        <div style={layer(screen === 'room')}>
+          <Bedroom
+            lastGame={lastGame}
+            onPick={onPick}
+            onSetup={onSetup}
+            isLive={screen === 'room'}
+            inputEnabled={inputEnabled}
+          />
         </div>
       )}
     </div>
@@ -156,7 +213,7 @@ function GameScreen({
 export function Cabinet(): React.ReactElement {
   const [open, setOpen] = useState<CabinetWindowId | null>(null)
   const [setupDriver, setSetupDriver] = useState<PaintShopDriver | null>(null)
-  const [screen, setScreen] = useState<CabinetScreen>('race')
+  const [screen, setScreen] = useState<CabinetScreen>('room')
   // Sound is opt-in and session-only: it has to start from a click, and a
   // remembered "on" would try to play before anyone had clicked anything.
   const [audioOn, setAudioOn] = useState(false)
@@ -166,15 +223,19 @@ export function Cabinet(): React.ReactElement {
   const close = useCallback((): void => setOpen(null), [])
   const closeSetup = useCallback((): void => setSetupDriver(null), [])
 
-  // Restored after mount rather than read during render, so the server and
-  // the first client frame agree; the swap is behind the boot screen anyway.
+  // The last game picked, so the arcade's cursor starts on it. Read after
+  // mount rather than during render, so the server and the first client
+  // frame agree; the room is drawn either way, so nothing visibly swaps.
+  const [lastGame, setLastGame] = useState<CabinetGame | null>(null)
   useEffect(() => {
     const stored = window.localStorage.getItem(GAME_STORAGE_KEY)
-    if (isCabinetScreen(stored)) setScreen(stored)
+    if (isCabinetGame(stored)) setLastGame(stored)
   }, [])
 
   const selectScreen = useCallback((next: CabinetScreen): void => {
     setScreen(next)
+    if (!isCabinetGame(next)) return
+    setLastGame(next)
     try {
       window.localStorage.setItem(GAME_STORAGE_KEY, next)
     } catch (error) {
@@ -183,8 +244,8 @@ export function Cabinet(): React.ReactElement {
     }
   }, [])
 
-  // Picking a cartridge is the same move whether it comes from the shelf's
-  // click or the menu's button — but the menu should also close behind it,
+  // Picking a game is the same move whether it comes from the arcade's
+  // screen or the menu's button — but the menu should also close behind it,
   // so the screen it just changed is actually visible.
   const pickGame = useCallback(
     (game: CabinetGame): void => {
@@ -193,14 +254,11 @@ export function Cabinet(): React.ReactElement {
     },
     [selectScreen],
   )
-  const backToShelf = useCallback((): void => {
-    selectScreen('shelf')
+  const backToRoom = useCallback((): void => {
+    selectScreen('room')
     setOpen(null)
   }, [selectScreen])
-
-  // The shelf lights a lamp on whichever cartridge was last in the machine.
-  const lastGameRef = useRef<CabinetGame | null>(null)
-  if (screen !== 'shelf') lastGameRef.current = screen
+  const openSetup = useCallback((): void => setOpen('setup'), [])
 
   // A held G must not machine-gun the cabinet through its library. Keyboards
   // auto-repeat at ~30Hz and each flick mounts a WebGL scene, so an unguarded
@@ -242,6 +300,7 @@ export function Cabinet(): React.ReactElement {
 
       const key = event.key.toLowerCase()
       if (key === 'l') setOpen((current) => (current === 'board' ? null : 'board'))
+      else if (key === 'u') setOpen((current) => (current === 'account' ? null : 'account'))
       else if (key === 'm') setOpen((current) => (current === 'menu' ? null : 'menu'))
       else if (key === 'g') {
         const now = Date.now()
@@ -251,25 +310,41 @@ export function Cabinet(): React.ReactElement {
       }
     }
 
+    // Escape with nothing open steps back from the game to the room. Bubble
+    // phase, deliberately: taking the wheel claims Escape in capture and
+    // stops it there, so a driver handing back never leaves the game.
+    const onBackKey = (event: KeyboardEvent): void => {
+      if (event.key !== 'Escape' || event.defaultPrevented) return
+      if (open !== null || setupDriver !== null || screen === 'room') return
+      event.preventDefault()
+      selectScreen('room')
+    }
+
     // Capture phase, so the shortcut is decided here before the race channel's
     // own window listeners see the same key.
     window.addEventListener('keydown', onKey, true)
-    return () => window.removeEventListener('keydown', onKey, true)
+    window.addEventListener('keydown', onBackKey)
+    return () => {
+      window.removeEventListener('keydown', onKey, true)
+      window.removeEventListener('keydown', onBackKey)
+    }
   }, [open, setupDriver, screen, selectScreen])
 
   if (isNarrow) {
     const active = open ?? DEFAULT_NARROW_WINDOW
-    const copy = active === 'menu' ? NARROW_MENU_COPY : WINDOW_COPY.board
+    const copy = active === 'menu' ? NARROW_MENU_COPY : WINDOW_COPY[active]
     return (
       <NavigationProvider resetKey="cabinet">
         <div style={{ display: 'flex', flexDirection: 'column', height: '100%', width: '100%' }}>
           <div style={{ position: 'relative', flex: '0 0 auto', height: RACE_BAND_HEIGHT, overflow: 'hidden' }}>
             <GameScreen
               screen={screen}
-              lastGame={lastGameRef.current}
+              lastGame={lastGame}
               paused={false}
               audioOn={audioOn}
               onPick={pickGame}
+              onSetup={openSetup}
+              inputEnabled={setupDriver === null}
             />
           </div>
 
@@ -285,7 +360,7 @@ export function Cabinet(): React.ReactElement {
             <div style={{ ...SCALED_PANEL, display: 'flex', flexDirection: 'column' }}>
               <TopBar layout="tabs" open={active} onOpen={(next) => setOpen(next ?? active)} />
               <Window key={active} inline title={copy.title} subtitle={copy.subtitle} onClose={close}>
-                <WindowBody id={active} onSelectDriver={setSetupDriver} screen={screen} onBackToShelf={backToShelf} audioOn={audioOn} onToggleAudio={toggleAudio} />
+                <WindowBody id={active} onSelectDriver={setSetupDriver} screen={screen} lastGame={lastGame} onBackToRoom={backToRoom} audioOn={audioOn} onToggleAudio={toggleAudio} />
               </Window>
             </div>
           </div>
@@ -303,24 +378,35 @@ export function Cabinet(): React.ReactElement {
       <div style={{ position: 'relative', height: '100%', width: '100%', overflow: 'hidden' }}>
         <GameScreen
           screen={screen}
-          lastGame={lastGameRef.current}
+          lastGame={lastGame}
           paused={open !== null}
           audioOn={audioOn}
           onPick={pickGame}
+          onSetup={openSetup}
+          inputEnabled={open === null && setupDriver === null}
         />
 
-        <div
-          style={{
-            position: 'absolute',
-            top: '14px',
-            right: '18px',
-            zIndex: 95,
-            pointerEvents: 'none',
-            ...SCALED_CHROME,
-          }}
-        >
-          <TopBar layout="corner" open={open} onOpen={setOpen} />
-        </div>
+        {/* The keys, said once on the way into a game. The corner bar names
+            the windows; this names what the corner bar cannot — the flick,
+            the way back, and taking the wheel. It fades by itself. */}
+        {screen !== 'room' && open === null && <KeyPrompt key={screen} />}
+
+        {/* The corner bar belongs to a running game. In the room the machine's
+            own screen is the chrome, and the keys still open the windows. */}
+        {screen !== 'room' && (
+          <div
+            style={{
+              position: 'absolute',
+              top: '14px',
+              right: '18px',
+              zIndex: 95,
+              pointerEvents: 'none',
+              ...SCALED_CHROME,
+            }}
+          >
+            <TopBar layout="corner" open={open} onOpen={setOpen} />
+          </div>
+        )}
 
         {/* The windows sit in their own zoomed layer, the same one the HUD
             uses, so a menu reads at the same size as the instruments beside
@@ -335,18 +421,16 @@ export function Cabinet(): React.ReactElement {
             ...SCALED_SURFACE,
           }}
         >
-          <AnimatePresence>
-            {open !== null && (
-              <Window
-                key={open}
-                title={WINDOW_COPY[open].title}
-                subtitle={WINDOW_COPY[open].subtitle}
-                onClose={close}
-              >
-                <WindowBody id={open} onSelectDriver={setSetupDriver} screen={screen} onBackToShelf={backToShelf} audioOn={audioOn} onToggleAudio={toggleAudio} />
-              </Window>
-            )}
-          </AnimatePresence>
+          {open !== null && (
+            <Window
+              key={open}
+              title={WINDOW_COPY[open].title}
+              subtitle={WINDOW_COPY[open].subtitle}
+              onClose={close}
+            >
+              <WindowBody id={open} onSelectDriver={setSetupDriver} screen={screen} lastGame={lastGame} onBackToRoom={backToRoom} audioOn={audioOn} onToggleAudio={toggleAudio} />
+            </Window>
+          )}
         </div>
 
         <div style={{ position: 'relative', zIndex: PAINT_SHOP_Z }}>
